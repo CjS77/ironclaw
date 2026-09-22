@@ -57,7 +57,7 @@ cd "$REPO_ROOT"
 # path, so the target-architecture family move (PROPOSAL §5) cannot leave this
 # pointed at a directory that no longer exists
 # (docs/internal/reborn/target-architecture/CHECKLIST.md WS10).
-FRONTEND_DIR="$("$REPO_ROOT/scripts/ci/crate-dir.sh" ironclaw_webui "$REPO_ROOT")/frontend"
+FRONTEND_DIR="$("$REPO_ROOT/scripts/ci/crate-dir.sh" ironclaw_webui "$REPO_ROOT")/naomi_fe"
 if ! command -v pnpm >/dev/null 2>&1; then
   if command -v corepack >/dev/null 2>&1; then
     corepack enable pnpm

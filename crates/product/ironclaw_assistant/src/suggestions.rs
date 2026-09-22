@@ -334,7 +334,7 @@ async fn submit_suggestion_generation(
         messages: vec![AgentMessage {
             role: AgentMessageRole::User,
             content: vec![ContentPart::text(
-                "Generate useful suggestions for what I can ask IronClaw to do next.",
+                "Generate useful suggestions for what I can ask Naomi to do next.",
             )],
         }],
         // No declared tool list: the run takes the profile's surface,
