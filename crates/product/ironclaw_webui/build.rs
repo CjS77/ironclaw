@@ -23,13 +23,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()); // safety: build script — Cargo always sets this
     let generated_dist_dir = out_dir.join("webui-v2-frontend-dist");
 
-    println!("cargo:rerun-if-changed=frontend/index.html");
-    println!("cargo:rerun-if-changed=frontend/package.json");
-    println!("cargo:rerun-if-changed=frontend/pnpm-lock.yaml");
-    println!("cargo:rerun-if-changed=frontend/pnpm-workspace.yaml");
-    println!("cargo:rerun-if-changed=frontend/public");
-    println!("cargo:rerun-if-changed=frontend/src");
-    println!("cargo:rerun-if-changed=frontend/vite.config.ts");
+    println!("cargo:rerun-if-changed=naomi_fe/index.html");
+    println!("cargo:rerun-if-changed=naomi_fe/package.json");
+    println!("cargo:rerun-if-changed=naomi_fe/pnpm-lock.yaml");
+    println!("cargo:rerun-if-changed=naomi_fe/pnpm-workspace.yaml");
+    println!("cargo:rerun-if-changed=naomi_fe/public");
+    println!("cargo:rerun-if-changed=naomi_fe/src");
+    println!("cargo:rerun-if-changed=naomi_fe/vite.config.ts");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=SKIP_FRONTEND_BUILD");
 
@@ -96,7 +96,7 @@ fn build_frontend_dist(
     manifest_dir: &Path,
     generated_dist_dir: &Path,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let frontend_dir = manifest_dir.join("frontend");
+    let frontend_dir = manifest_dir.join("naomi_fe");
     if generated_dist_dir.exists() {
         fs::remove_dir_all(generated_dist_dir)?;
     }

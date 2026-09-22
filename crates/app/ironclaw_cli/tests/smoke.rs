@@ -347,7 +347,7 @@ fn dockerfile_reborn_builds_without_backend_feature_flags() {
     assert!(
         dockerfile.contains("corepack enable pnpm")
             && dockerfile.matches("pnpm install --frozen-lockfile").count() >= 2
-            && dockerfile.contains(&format!("{}/frontend", crate_directory("ironclaw_webui"))),
+            && dockerfile.contains(&format!("{}/naomi_fe", crate_directory("ironclaw_webui"))),
         "Dockerfile must install WebUI frontend dependencies before cargo-chef and the final binary build: {dockerfile}"
     );
     assert!(

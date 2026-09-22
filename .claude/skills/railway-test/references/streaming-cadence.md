@@ -27,7 +27,7 @@ translate the same baseline, polling, and completion assertions to its DOM API.
 ```js
 var railwayPrompt = "Compare and contrast NEAR Protocol with Ethereum using current web research. Briefly tell me what you will research before using at least three tools, include another short progress update between tool phases, then write a detailed final answer of at least ten short paragraphs. I am testing smooth streaming, so stream naturally and do not make the answer terse.";
 var railwayBox = railwayTab.playwright.getByRole("textbox", {
-  name: "Ask IronClaw anything.",
+  name: "Ask Naomi anything.",
 });
 await railwayBox.fill(railwayPrompt);
 await railwayTab.playwright.getByRole("button", {
