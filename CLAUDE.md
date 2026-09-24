@@ -12,6 +12,8 @@ The rest of this file is Claude-specific.
   work, `reborn-extension-surfaces` for integrations,
   `ironclaw-reborn-testing` for test tiers, and
   `ironclaw-reborn-architecture-review` for boundary changes.
+- `/naomi-bump [major|minor]` (`.claude/skills/naomi-bump/SKILL.md`) bumps
+  the fork's naomi version (see "Versioning (naomi fork)" in `AGENTS.md`).
 - Path-scoped rules in `.claude/rules/*.md` load automatically when you read
   matching files — they are canonical for their topics (testing, database,
   types, cargo-features, review discipline, guidance maintenance, …); do not
