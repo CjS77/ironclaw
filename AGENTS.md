@@ -187,7 +187,7 @@ This repo is the naomi fork of IronClaw. Its releases are versioned
 - `J.K{-suffix}` is owned by this repo, and `.naomi-version` is its only source of truth.
   Anything that needs `J.K{-suffix}` must read that file; bumping the naomi version
   changes that file and nothing else.
-- Naomi releases are tagged `ironclaw-vX.Y.Z-naomi.J.K{-suffic}`, and fork changes are
+- Naomi releases are tagged `ironclaw-vX.Y.Z-naomi.J.K{-suffix}`, and fork changes are
   recorded in `CHANGELOG-NAOMI.md` (the upstream `CHANGELOG.md` is left alone).
 - The `-suffix` is optional. If it is present it must start with a dash, `-`. E.g.: `v1.5.0-naomi.1.0-rc3`.
 
