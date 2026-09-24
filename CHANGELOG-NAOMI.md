@@ -9,6 +9,14 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 
 ## [Unreleased]
 
+## [v1.4.0-naomi.0.3] - 2026-09-24
+
+### Changed
+- Naomi Linux musl release builds automated from naomi tags
+
+### Fixed
+- Typo fix
+
 ## [v1.4.0-naomi.0.2] - 2026-09-24
 
 ### Added
