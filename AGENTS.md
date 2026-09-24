@@ -175,6 +175,25 @@ navigation (hidden pages stay reachable by URL), and `.mintignore` is frozen:
 do not add entries. Enforced by `scripts/ci/docs_publication_boundary.py`
 (Code Style workflow); run it to check placement.
 
+## Versioning (naomi fork)
+
+This repo is the naomi fork of IronClaw. Its releases are versioned
+`vX.Y.Z-naomi.J.K{-suffix}`, ordered by `X.Y.Z` first and then `J.K`
+(`v1.5.0-naomi.0.1` is newer than `v1.4.0-naomi.1.0`).
+
+- `X.Y.Z` always comes from upstream: it is the latest stable upstream release
+  tag, `git tag --list 'ironclaw-v*' --sort=-v:refname | grep -E '^ironclaw-v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1`.
+  Crate `Cargo.toml` versions are not the source.
+- `J.K{-suffix}` is owned by this repo, and `.naomi-version` is its only source of truth.
+  Anything that needs `J.K{-suffix}` must read that file; bumping the naomi version
+  changes that file and nothing else.
+- Naomi releases are tagged `ironclaw-vX.Y.Z-naomi.J.K{-suffic}`, and fork changes are
+  recorded in `CHANGELOG-NAOMI.md` (the upstream `CHANGELOG.md` is left alone).
+- The `-suffix` is optional. If it is present it must start with a dash, `-`. E.g.: `v1.5.0-naomi.1.0-rc3`.
+
+To bump, follow `.claude/skills/naomi-bump/SKILL.md` (`/naomi-bump [major|minor] [suffix]`
+in Claude Code).
+
 ## Change discipline, and before finishing
 
 - Keep changes scoped; preserve unrelated work in dirty worktrees; avoid generated-file churn. Security, persistence-schema, runtime, worker, CI, and secrets changes need explicit rollback/compatibility review.
