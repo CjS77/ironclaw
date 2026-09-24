@@ -190,6 +190,14 @@ This repo is the naomi fork of IronClaw. Its releases are versioned
 - Naomi releases are tagged `ironclaw-vX.Y.Z-naomi.J.K{-suffix}`, and fork changes are
   recorded in `CHANGELOG-NAOMI.md` (the upstream `CHANGELOG.md` is left alone).
 - The `-suffix` is optional. If it is present it must start with a dash, `-`. E.g.: `v1.5.0-naomi.1.0-rc3`.
+- Pushing a naomi tag runs `.github/workflows/naomi-release.yml`, which builds
+  `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` only and
+  publishes a GitHub Release (a suffixed version is a prerelease). It refuses a
+  tag that disagrees with `.naomi-version` at the tagged commit, writes the full
+  version into the `ironclaw` crate in CI only (never committed), and takes the
+  release notes from the tag's `CHANGELOG-NAOMI.md` section
+  (`scripts/ci/naomi_release.py`). Upstream's `ironclaw-release.yml` excludes
+  naomi tags.
 
 To bump, follow `.claude/skills/naomi-bump/SKILL.md` (`/naomi-bump [major|minor] [suffix]`
 in Claude Code).
