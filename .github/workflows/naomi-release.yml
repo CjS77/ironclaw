@@ -1,0 +1,214 @@
+name: Naomi Release
+
+# Publishes the naomi fork's Linux musl binaries when a naomi release tag
+# (`ironclaw-vX.Y.Z-naomi.J.K{-suffix}`, created by /naomi-bump) is pushed.
+# Upstream's cargo-dist publisher (ironclaw-release.yml) excludes these tags:
+# cargo-dist requires the tag to equal the crate version, and the fork keeps
+# `J.K` only in .naomi-version. The build steps mirror the musl entries of
+# reborn-release-compile.yml. A version without a suffix is published as the
+# latest release; a suffixed one (`-rc3`) as a prerelease.
+
+on:
+  push:
+    tags:
+      - 'ironclaw-v*-naomi.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naomi-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Validate naomi tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - id: plan
+        name: Check tag against .naomi-version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/ci/naomi_release.py plan --tag "$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ironclaw (naomi, ${{ matrix.target }})
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+            cc_env: CC_x86_64_unknown_linux_musl=musl-gcc
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            cc_env: CC_aarch64_unknown_linux_musl=musl-gcc
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Python for release smoke
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust target
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.target }}
+
+      # The CLI embeds the WebUI frontend during compilation, which requires Node/pnpm.
+      - name: Install Node.js for the embedded WebUI
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install musl toolchain
+        shell: bash
+        run: scripts/ci/install-ci-apt-packages.sh musl-tools binutils file
+
+      - name: Configure musl C compiler
+        shell: bash
+        env:
+          CC_ENV: ${{ matrix.cc_env }}
+        run: |
+          echo "$CC_ENV" >> "$GITHUB_ENV"
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: naomi-release-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Stamp the release version into the ironclaw package
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: python3 scripts/ci/naomi_release.py stamp --version "$VERSION"
+
+      - name: Compile ironclaw
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --locked --profile dist \
+            --package ironclaw \
+            --bin ironclaw \
+            --target "$TARGET"
+
+      # Same portability gate as reborn-release-compile.yml: an installed musl
+      # loader on the runner must not hide a non-static artifact.
+      - name: Verify musl portability
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          binary_path="target/$TARGET/dist/ironclaw"
+          program_headers="$(readelf --program-headers --wide "$binary_path")"
+          dynamic_tags="$(readelf --dynamic --wide "$binary_path")"
+
+          if grep -Eq '^[[:space:]]*INTERP[[:space:]]' <<< "$program_headers"; then
+            echo "::error::$TARGET must not require a musl program interpreter"
+            echo "$program_headers"
+            exit 1
+          fi
+
+          if grep -q '(NEEDED)' <<< "$dynamic_tags"; then
+            echo "::error::$TARGET must not contain dynamic library dependencies"
+            echo "$dynamic_tags"
+            exit 1
+          fi
+
+          file "$binary_path"
+
+      - name: Smoke exact release binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          binary_path="target/$TARGET/dist/ironclaw"
+          python scripts/ci/smoke-release-binary.py --binary "$binary_path"
+          reported="$("$binary_path" --version)"
+          if ! grep -qF -- "$VERSION" <<< "$reported"; then
+            echo "::error::binary reports '$reported', expected version $VERSION"
+            exit 1
+          fi
+
+      - name: Package archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          staging="ironclaw-$TARGET"
+          mkdir -p "dist/$staging"
+          cp "target/$TARGET/dist/ironclaw" README.md LICENSE-MIT LICENSE-APACHE CHANGELOG-NAOMI.md "dist/$staging/"
+          tar -C dist -czf "dist/$staging.tar.gz" "$staging"
+          (cd dist && sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256")
+
+      - name: Upload archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: naomi-release-${{ matrix.target }}
+          path: |
+            dist/ironclaw-${{ matrix.target }}.tar.gz
+            dist/ironclaw-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - plan
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: naomi-release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        run: |
+          python3 scripts/ci/naomi_release.py notes --version "$VERSION" > "$RUNNER_TEMP/notes.md"
+          if [[ "$PRERELEASE" == "true" ]]; then
+            channel=--prerelease
+          else
+            channel=--latest
+          fi
+          gh release create "$TAG" --verify-tag "$channel" \
+            --title "v$VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            dist/*.tar.gz dist/*.tar.gz.sha256

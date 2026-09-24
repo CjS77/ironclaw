@@ -139,11 +139,16 @@ Stage only those two files.
 git tag ironclaw-vX.Y.Z-naomi.<new J.K>{-suffix}
 ```
 
-This follows the repo's `ironclaw-v*` tag namespace. The `-naomi.*` extension means
-the tag does not match the upstream release trigger
-`^ironclaw-v[0-9]+\.[0-9]+\.[0-9]+$`, so it does not start a cargo-dist release.
+This follows the repo's `ironclaw-v*` tag namespace. Upstream's cargo-dist
+publisher (`.github/workflows/ironclaw-release.yml`) excludes `ironclaw-v*-naomi.*`
+tags in its trigger; pushing this tag instead starts
+`.github/workflows/naomi-release.yml`, which builds the Linux musl binaries and
+publishes a GitHub Release. Verify both with
+`grep -n "naomi" .github/workflows/ironclaw-release.yml .github/workflows/naomi-release.yml`.
 
 ## 9. Report
 
 Report the old and new naomi versions, the commit, and the tag. State that
-nothing was pushed: the result is a local commit and tag only.
+nothing was pushed: the result is a local commit and tag only. To release,
+push the commit and then the tag:
+`git push origin HEAD && git push origin ironclaw-vX.Y.Z-naomi.<new J.K>{-suffix}`.
