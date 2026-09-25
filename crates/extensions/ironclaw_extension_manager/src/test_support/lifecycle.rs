@@ -88,6 +88,8 @@ pub struct ExtensionLifecycleTestServices {
     /// (`ironclaw_authorization::effects_are_covered`) — instead of exposing
     /// publisher internals.
     pub trust_policy: Arc<HostTrustPolicy>,
+    /// The host's product-auth runtime ports; `None` without network egress.
+    pub runtime_ports: Option<ironclaw_host_runtime::ProductAuthProviderRuntimePorts>,
     secret_store: Arc<dyn SecretStorePort>,
 }
 
@@ -566,7 +568,7 @@ async fn build_lifecycle_test_services_over_backing(
             ))),
             tenant_operator_user_id: owner_user_id,
             hosted_mcp_dependencies: ironclaw_extension_host::HostedMcpPreparationDependencies {
-                runtime_ports,
+                runtime_ports: runtime_ports.clone(),
                 catalog_safety: ironclaw_extension_host::McpCatalogAdmissionPolicy::new(Arc::new(
                     ironclaw_safety::Sanitizer::new(),
                 )),
@@ -698,6 +700,7 @@ async fn build_lifecycle_test_services_over_backing(
         approval_requests,
         capability_leases,
         trust_policy,
+        runtime_ports,
         secret_store,
     }
 }

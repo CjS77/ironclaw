@@ -7,10 +7,16 @@ use thiserror::Error;
 
 pub(crate) const DEFAULT_IRONHUB_MANIFEST_URL: &str =
     "https://hub.ironclaw.com/api/catalog/manifest.json";
-pub(crate) const MANIFEST_VERIFY_KEYS: &[(&str, &str)] = &[(
-    "5895a21abea89672",
-    "f64d2d3a3228b16ca59450364d26b278071a1a425544f242504033341d8459bd",
-)];
+pub(crate) const MANIFEST_VERIFY_KEYS: &[(&str, &str)] = &[
+    (
+        "5895a21abea89672",
+        "f64d2d3a3228b16ca59450364d26b278071a1a425544f242504033341d8459bd",
+    ),
+    (
+        "93f44233e7e0e589",
+        "8236313c7045222f97658ed7c27c9cde0ca1ef275d9989a2535af57a9e4a8341",
+    ),
+];
 pub(crate) const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_SIGNED_MANIFEST_BYTES: u64 = MAX_MANIFEST_BYTES * 2;
 pub(crate) const MAX_METADATA_BYTES: u64 = 1024 * 1024;

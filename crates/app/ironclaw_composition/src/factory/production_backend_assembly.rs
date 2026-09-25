@@ -1124,7 +1124,11 @@ pub(super) async fn build_backend_production(
             channel_egress_scope.user_id.clone(),
         ),
     );
-    let runtime_http_egress = Some(product_auth_runtime_ports.runtime_http_egress());
+    let ironhub_http_egress = Arc::new(
+        ironclaw_extension_manager::ironhub::IronhubDirectEgress::new(
+            product_auth_runtime_ports.clone(),
+        ),
+    );
     let host_runtime_http_egress = services.host_runtime_http_egress_port();
     let ironhub_link_state = Arc::new(
         ironclaw_extension_manager::ironhub::IronhubLinkStateStore::new(Arc::clone(
@@ -1439,7 +1443,7 @@ pub(super) async fn build_backend_production(
         channel_identity_store,
         channel_dm_target_store,
         channel_disconnect_slot,
-        runtime_http_egress,
+        ironhub_http_egress: Some(ironhub_http_egress),
         ironhub_link_state,
         memory_mounts,
         system_extensions_lifecycle_mounts,

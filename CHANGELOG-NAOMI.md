@@ -9,6 +9,17 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 
 ## [Unreleased]
 
+### Added
+- Naomi catalog signing key `93f44233e7e0e589` trusted alongside the upstream IronHub key
+- Hardcoded IronHub URL whitelist: the catalog URL, private manifest URLs and artifact URLs must start with `https://hub.ironclaw.com/` or `https://github.com/CjS77/naomi-addons/releases/download/`
+- Operator guide for custom IronHub catalogs: catalog URL whitelist, adding signing keys, redirect behavior
+
+### Changed
+- IronHub downloads and their redirect hops may reach only `hub.ironclaw.com`, `github.com`, `release-assets.githubusercontent.com` and `objects.githubusercontent.com`; the `*.githubusercontent.com` wildcard, `raw.githubusercontent.com` and `github-releases.githubusercontent.com` are no longer allowed
+
+### Fixed
+- `ironclaw ironhub` CLI commands and hub-delivered installs now reach the network; previously no network policy was granted to them and every download was refused before it was sent
+
 ## [v1.4.0-naomi.0.3] - 2026-09-24
 
 ### Changed

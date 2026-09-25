@@ -1,10 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, VerifyingKey};
-use ironclaw_host_api::{
-    action::{NetworkPolicy, NetworkScheme, NetworkTargetPattern},
-    approval::sha256_digest_token,
-};
+use ironclaw_host_api::{action::NetworkPolicy, approval::sha256_digest_token};
 use ironclaw_skills::{
     MAX_INSTALL_BUNDLE_FILE_BYTES, MAX_INSTALL_BUNDLE_FILES, MAX_INSTALL_BUNDLE_TOTAL_BYTES,
 };
@@ -12,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 use crate::ironhub::{
-    artifact_hosts::is_allowed_artifact_host,
+    artifact_hosts::{WhitelistRejection, artifact_network_policy, check_download_url},
     model::{
         IronHubArtifact, IronHubCommandError, IronHubEntryKind, IronHubEntrySummary,
         IronHubInstallOptions, IronHubManifest, IronHubProvenance, IronHubSkillEntry,
@@ -441,37 +438,36 @@ fn validate_artifact_url_for_origin(
     let host = parsed
         .host_str()
         .ok_or_else(|| catalog(format!("{manifest_name}.{field} host is missing")))?;
-    let allowed = match origin {
-        Some(origin) => origin.matches(&parsed),
-        None => is_allowed_artifact_host(host),
-    };
-    if host_is_disallowed_target(host) || !allowed {
+    let origin_matches = origin.is_none_or(|origin| origin.matches(&parsed));
+    let whitelisted = check_download_url(&parsed);
+    if host_is_disallowed_target(host)
+        || !origin_matches
+        || whitelisted == Err(WhitelistRejection::Host)
+    {
         return Err(catalog(format!(
             "{manifest_name}.{field} host '{host}' is not allowed"
+        )));
+    }
+    if whitelisted.is_err() {
+        return Err(catalog(format!(
+            "{manifest_name}.{field} path is not on the IronHub download whitelist"
         )));
     }
     Ok(())
 }
 
+/// Validates a download's starting URL and returns the policy the request
+/// carries: the fixed IronHub host list, so redirect hops are held to the same
+/// exact hosts wherever the request policy is enforced.
 pub(crate) fn network_policy_for_url_from_origin(
     value: &str,
     max_bytes: u64,
     origin: Option<&CatalogOrigin>,
 ) -> Result<NetworkPolicy, IronHubCommandError> {
     validate_artifact_url_for_origin("download", "url", value, origin)?;
-    let parsed =
-        url::Url::parse(value).map_err(|error| catalog(format!("invalid URL: {error}")))?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| catalog("URL host is missing"))?;
     Ok(NetworkPolicy {
-        allowed_targets: vec![NetworkTargetPattern {
-            scheme: Some(NetworkScheme::Https),
-            host_pattern: host.to_ascii_lowercase(),
-            port: parsed.port(),
-        }],
-        deny_private_ip_ranges: true,
         max_egress_bytes: Some(max_bytes),
+        ..artifact_network_policy()
     })
 }
 

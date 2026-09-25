@@ -2,6 +2,7 @@ mod agent_link;
 mod artifact_hosts;
 mod capabilities;
 mod catalog;
+mod direct_egress;
 mod link_service;
 mod model;
 mod package;
@@ -17,6 +18,7 @@ pub use capabilities::{
     IRONHUB_INFO_CAPABILITY_ID, IRONHUB_INSTALL_CAPABILITY_ID, IRONHUB_SEARCH_CAPABILITY_ID,
     extend_builtin_first_party_package, insert_handlers,
 };
+pub use direct_egress::IronhubDirectEgress;
 pub use link_service::{
     IronhubLinkBuildError, IronhubLinkStateError, IronhubLinkStateStore, RebornIronhubLinkService,
 };

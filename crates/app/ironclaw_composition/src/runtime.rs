@@ -638,7 +638,7 @@ pub struct RebornRuntime {
     pub(crate) shared_extension_registry: Arc<SharedExtensionRegistry>,
     pub(crate) skill_auto_activate_learned: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) extension_management: Arc<RebornLocalExtensionManagementPort>,
-    pub(crate) runtime_http_egress: Option<Arc<dyn RuntimeHttpEgress>>,
+    pub(crate) ironhub_http_egress: Option<Arc<dyn RuntimeHttpEgress>>,
     /// Durable nonce and signed-manifest replay state shared by CLI IronHub
     /// installs and the optional deep-link gateway.
     pub(crate) ironhub_link_state: Arc<ironclaw_extension_manager::ironhub::IronhubLinkStateStore>,
@@ -796,7 +796,7 @@ impl ironclaw_extension_manager::ironhub::RebornIronHubRuntime for RebornRuntime
     }
 
     fn ironhub_runtime_http_egress(&self) -> Option<Arc<dyn RuntimeHttpEgress>> {
-        self.runtime_http_egress.clone()
+        self.ironhub_http_egress.clone()
     }
 
     fn ironhub_link_state(
@@ -4726,7 +4726,7 @@ pub(crate) async fn build_runtime_with_resource_governor(
     let ironhub_link_state = Arc::clone(&services.ironhub_link_state);
     let ironhub_link_service = match ironhub_agent_shared_key {
         Some(shared_key) => {
-            let egress = services.runtime_http_egress.clone().ok_or_else(|| {
+            let egress = services.ironhub_http_egress.clone().ok_or_else(|| {
                 RebornRuntimeError::MalformedConfig {
                     reason:
                         "IronHub gateway key was configured but mediated HTTP egress is unavailable"
@@ -4779,7 +4779,7 @@ pub(crate) async fn build_runtime_with_resource_governor(
         shared_extension_registry: services.shared_extension_registry.clone(),
         skill_auto_activate_learned: Arc::clone(&services.skill_auto_activate_learned),
         extension_management: services.extension_management.clone(),
-        runtime_http_egress: services.runtime_http_egress.as_ref().map(Arc::clone),
+        ironhub_http_egress: services.ironhub_http_egress.as_ref().map(Arc::clone),
         ironhub_link_state,
         ironhub_manifest_url,
         ironhub_link_service,

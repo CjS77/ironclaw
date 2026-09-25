@@ -5,6 +5,7 @@ mod tests {
     #![allow(clippy::module_inception)]
 
     mod display_preview;
+    mod ironhub_redirects;
 
     use super::super::*;
 

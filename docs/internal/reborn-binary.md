@@ -315,7 +315,10 @@ cargo run -q -p ironclaw --bin ironclaw -- ironhub install private-tool \
 ```
 
 Catalog and artifact downloads use host-mediated HTTPS egress, bounded response
-sizes, a host allowlist, and private-network denial. The catalog envelope is
+sizes, and private-network denial. Every starting URL must match a hardcoded
+prefix whitelist, and every redirect hop an exact host list (both in
+`ironhub/artifact_hosts.rs`). CLI and hub-delivered calls run outside capability
+dispatch, so `IronhubDirectEgress` stages that same fixed policy for them. The catalog envelope is
 verified with the pinned Ed25519 key before entries are parsed, and downloaded
 artifacts must match both the signed byte count and SHA-256 digest. Install
 automation can pin the inspected catalog state with `--expected-version` and

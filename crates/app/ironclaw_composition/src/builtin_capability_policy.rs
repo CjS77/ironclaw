@@ -901,12 +901,10 @@ mod tests {
         assert_eq!(
             hosts,
             std::collections::BTreeSet::from([
-                "*.githubusercontent.com",
-                "github-releases.githubusercontent.com",
                 "github.com",
                 "hub.ironclaw.com",
                 "objects.githubusercontent.com",
-                "raw.githubusercontent.com",
+                "release-assets.githubusercontent.com",
             ])
         );
         assert!(!hosts.contains("api.github.com"));
