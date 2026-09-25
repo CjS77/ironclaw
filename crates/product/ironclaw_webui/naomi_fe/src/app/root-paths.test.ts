@@ -42,8 +42,8 @@ test("PWA and wallet entrypoints use root-scoped URLs", () => {
   assert.deepEqual(
     manifest.icons.map((icon: { src: string }) => icon.src),
     [
-      "/assets/web-app-manifest-192x192.png",
-      "/assets/web-app-manifest-512x512.png",
+      "/assets/web-app-manifest-192x192.webp",
+      "/assets/web-app-manifest-512x512.webp",
     ],
   );
 
