@@ -262,6 +262,7 @@ fn content_type_for(path: &Path) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("webmanifest") => "application/manifest+json",
         Some("json") => "application/json",
