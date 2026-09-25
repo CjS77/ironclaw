@@ -2,9 +2,10 @@ import { useT } from "../../../lib/i18n";
 import { areaDisplayName, pathSegments } from "../lib/workspace-presenters";
 
 // Path breadcrumb shared by the file viewer and the directory listing. The root
-// is shown as the localized "workspace" label (both areas live under it); the
-// first segment is a storage area, rendered by its display name ("home"/"memory")
-// while still navigating by its real id. Every crumb emits the same qualified
+// is shown as the localized "Root" label (both areas live under it); the first
+// segment is a storage area, rendered by its display name ("Workspace"/"Memory",
+// matching the agent's /workspace and /memory paths) while still navigating by
+// its real id. Every crumb emits the same qualified
 // path the tree uses; the page then applies either its caller-default or
 // thread-scoped route prefix, so clicks and direct links stay in sync.
 export function WorkspaceBreadcrumb({ path, onNavigate }) {

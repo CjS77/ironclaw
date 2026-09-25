@@ -15,13 +15,13 @@ vi.mock("../../../lib/i18n", () => ({
   useI18n: () => ({ lang: "de" }),
   useT: () => (key: string, params: Record<string, string> = {}) => {
     const labels: Record<string, string> = {
-      "workspace.area.home": "Start",
+      "workspace.area.home": "Arbeitsbereich",
       "workspace.area.memory": "Speicher",
       "workspace.fileMeta": "{mime} · {size}",
       "workspace.filterPlaceholder": "Nach Namen filtern…",
       "settings.clearSearch": "Suche löschen",
       "workspace.pickFileTitle": "Datei aus dem Arbeitsbereich auswählen",
-      "workspace.breadcrumbRoot": "Arbeitsbereich",
+      "workspace.breadcrumbRoot": "Stammverzeichnis",
       "workspace.unableOpenDirectory": "Ordner konnte nicht geöffnet werden",
     };
     return (labels[key] || key)
@@ -59,7 +59,7 @@ test("workspace tree renders localized area labels instead of backend ids", () =
     />,
   );
 
-  assert.match(html, />Start</);
+  assert.match(html, />Arbeitsbereich</);
   assert.match(html, />Speicher</);
   assert.doesNotMatch(html, />workspace</);
   assert.doesNotMatch(html, />memory</);
@@ -117,7 +117,7 @@ test("workspace uses the shared clearable search field and an accessible breadcr
   assert.match(sidebar, /aria-label="Nach Namen filtern…"/);
   assert.match(sidebar, /<input[^>]*type="search"/);
   assert.match(sidebar, /<button[^>]*aria-label="Suche löschen"/);
-  assert.match(breadcrumb, /<nav aria-label="Arbeitsbereich"/);
+  assert.match(breadcrumb, /<nav aria-label="Stammverzeichnis"/);
 });
 
 test("workspace tree directory failures are announced as alerts", () => {
