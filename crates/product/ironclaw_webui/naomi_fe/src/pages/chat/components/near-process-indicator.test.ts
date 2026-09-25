@@ -4,17 +4,14 @@ import vm from "node:vm";
 import { componentSourceForTest } from "../../../lib/vm-component-harness";
 import "../../../test/vm-tsx-setup";
 
-const CLIP_ID = "near-clip-test";
+const ANIMATED_SRC = "/assets/naomi-typing-50px.webp";
+const STILL_SRC = "/assets/naomi-typing-50px-still.webp";
 
 // Load the presentational component the same way connection-status.test.ts does:
-// strip imports, expose the function, and run it in a VM with a mocked React so
-// `React.useId()` returns a deterministic clipPath id. The vm-tsx-setup shim
+// strip imports, expose the function, and run it in a VM. The vm-tsx-setup shim
 // transpiles the JSX into inspectable `{ type, props, children }` nodes.
 function loadNearProcessIndicator() {
-  const context: vm.Context = {
-    React: { useId: () => CLIP_ID },
-    globalThis: {},
-  };
+  const context: vm.Context = { globalThis: {} };
   vm.runInNewContext(
     componentSourceForTest(
       new URL("./near-process-indicator.tsx", import.meta.url),
@@ -47,8 +44,20 @@ function findNode(value, predicate, seen = new Set()) {
 }
 
 const byClass = (name) => (node) => node.props?.className === name;
+const byType = (type) => (node) => node.type === type;
 
-test("NearProcessIndicator working state chases the NEAR spine with elapsed time", () => {
+// The icon is decorative: the label beside it carries the state, so the image
+// must stay hidden from assistive tech, as the old SVG was.
+function assertDecorativeImage(img) {
+  assert.notEqual(img, null, "the indicator image should render");
+  assert.equal(img.props.alt, "");
+  assert.equal(img.props["aria-hidden"], "true");
+  assert.equal(img.props.className, "near-process-icon");
+  assert.equal(img.props.width, 28);
+  assert.equal(img.props.height, 28);
+}
+
+test("NearProcessIndicator working state shows the animated typing image with elapsed time", () => {
   const NearProcessIndicator = loadNearProcessIndicator();
   const rendered = NearProcessIndicator({
     state: "working",
@@ -59,18 +68,20 @@ test("NearProcessIndicator working state chases the NEAR spine with elapsed time
   assert.match(rendered.props.className, /\bnear-process\b/);
   assert.match(rendered.props.className, /\bis-busy\b/);
 
-  // The canonical NEAR glyph is rendered while working; the busy-state class
-  // scopes its dimmed presentation in app.css.
-  const base = findNode(rendered, byClass("near-base"));
-  assert.notEqual(base, null, "base glyph should render");
-  assert.ok(base.props.d.startsWith("M21.443"), "base uses the NEAR mark path");
+  // The animated webp plays by default; readers who ask for reduced motion get
+  // the still first frame instead, through a <picture> media source.
+  const picture = findNode(rendered, byType("picture"));
+  assert.notEqual(picture, null, "working state wraps the image in <picture>");
+  const source = findNode(picture, byType("source"));
+  assert.notEqual(source, null, "reduced-motion source should render");
+  assert.equal(source.props.media, "(prefers-reduced-motion: reduce)");
+  assert.equal(source.props.srcSet, STILL_SRC);
+  const img = findNode(picture, byType("img"));
+  assertDecorativeImage(img);
+  assert.equal(img.props.src, ANIMATED_SRC);
 
-  // The comet only exists while working, clipped to the glyph via the useId ref.
-  const comet = findNode(rendered, byClass("near-comet"));
-  assert.notEqual(comet, null, "comet should render while working");
-  assert.ok(comet.props.d.startsWith("M2.6 22.2"), "comet rides the N spine");
-  const clipGroup = findNode(rendered, (node) => node.props?.clipPath);
-  assert.equal(clipGroup.props.clipPath, `url(#${CLIP_ID})`);
+  // The old inline SVG mark is gone.
+  assert.equal(findNode(rendered, byType("svg")), null);
 
   // State-scoped CSS makes the working label strong; elapsed is shown beside it.
   const label = findNode(rendered, byClass("near-process-label"));
@@ -81,22 +92,29 @@ test("NearProcessIndicator working state chases the NEAR spine with elapsed time
   assert.equal(elapsed.children[0], "0:03");
 });
 
-test("NearProcessIndicator done state is a solid, static glyph with a muted label", () => {
+test("NearProcessIndicator done state is the still first frame with a muted label", () => {
   const NearProcessIndicator = loadNearProcessIndicator();
-  const rendered = NearProcessIndicator({ state: "done", label: "Done" });
+  const rendered = NearProcessIndicator({
+    state: "done",
+    label: "Done",
+    elapsed: "0:03",
+  });
 
   assert.match(rendered.props.className, /\bis-done\b/);
 
-  const base = findNode(rendered, byClass("near-base"));
-  assert.ok(base.props.d.startsWith("M21.443"), "base uses the NEAR mark path");
-
-  assert.equal(
-    findNode(rendered, byClass("near-comet")),
-    null,
-    "comet is hidden when done",
-  );
+  // A finished run never animates, so there is no <picture> or animated source.
+  assert.equal(findNode(rendered, byType("picture")), null);
+  const img = findNode(rendered, byType("img"));
+  assertDecorativeImage(img);
+  assert.equal(img.props.src, STILL_SRC);
+  assert.equal(findNode(rendered, byType("svg")), null);
 
   const label = findNode(rendered, byClass("near-process-label"));
   assert.notEqual(label, null, "done label uses the shared label class");
   assert.equal(label.children[0], "Done");
+  assert.equal(
+    findNode(rendered, byClass("near-process-elapsed")),
+    null,
+    "elapsed only shows while working",
+  );
 });
