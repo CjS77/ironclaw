@@ -968,7 +968,10 @@ fn is_test_source_path(path: &Path) -> bool {
 ///   the `github` term matches product/API references rather than routine
 ///   code citations;
 /// - `metadata.google.internal` — the cloud metadata endpoint named by SSRF
-///   guards, which is security vocabulary, not the google extensions vendor.
+///   guards, which is security vocabulary, not the google extensions vendor;
+/// - `Google Chrome` — the browser brand in the `Sec-CH-UA` client hint the
+///   outbound HTTP transport sends, not the google extensions vendor. Matched
+///   case-sensitively, before lowercasing, so only the brand spelling is masked.
 fn mask_non_extension_references(source: &str) -> String {
     const REPO_MARKER: &str = "github.com/";
     let mut masked = String::with_capacity(source.len());
@@ -982,7 +985,9 @@ fn mask_non_extension_references(source: &str) -> String {
         rest = &after[end..];
     }
     masked.push_str(rest);
-    masked.replace("metadata.google.internal", "")
+    masked
+        .replace("metadata.google.internal", "")
+        .replace("Google Chrome", "")
 }
 
 fn scannable_kind(path: &Path) -> Option<FileKind> {
@@ -2069,6 +2074,34 @@ scopes = ["send"]
 
 /// TEST-7: the allowlist can only shrink — stale entries fail and new
 /// violations fail.
+#[test]
+fn scanner_masks_only_the_google_chrome_browser_brand() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let terms = BTreeSet::from(["google".to_string()]);
+    let brand_path = temp.path().join("brand.rs");
+    std::fs::write(
+        &brand_path,
+        "const SEC_CH_UA: &str = r#\"\"Chromium\";v=\"151\", \"Google Chrome\";v=\"151\"\"#;\n",
+    )
+    .expect("write brand source");
+    assert!(
+        scan_file(&brand_path, FileKind::Rust, &terms).is_empty(),
+        "the browser brand is not the google extensions vendor"
+    );
+
+    let vendor_path = temp.path().join("vendor.rs");
+    std::fs::write(
+        &vendor_path,
+        "const BRAND: &str = \"Google Chrome\";\npub fn google_chrome_sync() {}\n",
+    )
+    .expect("write vendor source");
+    assert_eq!(
+        scan_file(&vendor_path, FileKind::Rust, &terms),
+        vec!["google".to_string()],
+        "only the exact brand spelling is masked; other google names still match"
+    );
+}
+
 #[test]
 fn scanner_allowlist_is_shrink_only() {
     let hits: BTreeSet<(String, String)> = [

@@ -26,7 +26,8 @@ NetworkHttpRequest { scope, method, url, headers, body, policy, response_body_li
   -> URL parse + target normalization
   -> StaticNetworkPolicyEnforcer with a conservative method + URL + header + body byte estimate
   -> DNS resolution + private/reserved IP denial
-  -> pinned outbound HTTP transport with redirects disabled and a bounded client cache
+  -> pinned outbound HTTP transport with redirects disabled, a default header set, and a bounded client cache
+  -> on a 3xx: repeat every step above for the Location target (at most 3 hops, no caller headers carried)
   -> NetworkHttpResponse { body, NetworkUsage { request_bytes, response_bytes, resolved_ip } }
 ```
 
@@ -82,7 +83,9 @@ V1 semantics intentionally mirror the current WASM network import policy checks 
 - `deny_private_ip_ranges` blocks literal private, loopback, link-local, documentation, broadcast, multicast, unspecified, carrier-grade NAT, IPv4-mapped IPv6 private ranges, and unique-local IP targets
 - `max_egress_bytes` requires a request-byte estimate and denies requests whose estimated bytes exceed the configured limit. Host-mediated HTTP estimates include the method, URL, headers, HTTP framing overhead, and body so large URLs or headers cannot bypass the limit.
 
-HTTP egress rejects URL userinfo before policy, DNS, or transport so credentials cannot be smuggled through an allowlisted host URL. It resolves hostnames before dispatch and denies the request before transport when `deny_private_ip_ranges` is true and any resolved address is private, loopback, link-local, documentation, multicast, broadcast, unspecified, carrier-grade NAT, unique-local, or an IPv4-mapped IPv6 address that maps to a non-public IPv4 address. The default transport disables redirects and pins the request to the vetted resolved address set so a later DNS answer cannot silently change the destination for that request, while still allowing connector-level fallback across alternate A/AAAA answers. Caller-provided `Host` headers are rejected before transport so virtual-host routing cannot diverge from the URL host that policy validated. Runtime-visible response bodies are always bounded: omitted and oversized explicit `response_body_limit` values clamp to the V1 default in-memory cap rather than reading unbounded data.
+HTTP egress rejects URL userinfo before policy, DNS, or transport so credentials cannot be smuggled through an allowlisted host URL. It resolves hostnames before dispatch and denies the request before transport when `deny_private_ip_ranges` is true and any resolved address is private, loopback, link-local, documentation, multicast, broadcast, unspecified, carrier-grade NAT, unique-local, or an IPv4-mapped IPv6 address that maps to a non-public IPv4 address. The default transport disables its own redirect handling; `PolicyNetworkHttpEgress` follows redirects instead, re-running URL validation, policy authorization, and private-IP DNS denial for every hop and carrying no caller header across a hop. The transport pins the request to the vetted resolved address set so a later DNS answer cannot silently change the destination for that request, while still allowing connector-level fallback across alternate A/AAAA answers. Caller-provided `Host` headers are rejected before transport so virtual-host routing cannot diverge from the URL host that policy validated. Runtime-visible response bodies are always bounded: omitted and oversized explicit `response_body_limit` values clamp to the V1 default in-memory cap rather than reading unbounded data.
+
+Outbound requests carry a complete default header set for any header the caller did not set, chosen by `OutboundIdentity` on `ReqwestNetworkTransport`. The default, `Chrome`, is a current Chrome-on-Windows User-Agent with matching `Sec-CH-UA` client hints, `Accept`, and `Accept-Language`; `Naomi` sends `Naomi/<.naomi-version> (IronClaw; +https://github.com/CjS77/ironclaw)` with Firefox's values and no client hints. Both send `Accept-Encoding: gzip, deflate, br, zstd`, and the transport decodes each of those encodings before the body is returned or counted against the response limit. The headers live on the HTTP client, so they also reach redirect hops.
 
 Hermetic debug E2E binaries may activate the centralized transport wrapper with
 `IRONCLAW_REBORN_TEST_HTTP_REWRITE_MAP`. Rewrites happen only after policy and
@@ -162,7 +165,8 @@ The crate tests cover:
 - centralized rewrite validation, loopback routing, and unmapped-host preservation
 - caller-provided `Host` header denial before transport
 - default-port target matching for URL-derived requests
-- redirects are not followed by the default transport
+- redirects are not followed by the transport; the egress follows at most 3 hops, re-authorizing each destination and dropping caller headers
+- every request carries the transport's default header set (`OutboundIdentity`, Chrome by default) for headers the caller did not set, on redirect hops too, and advertised encodings are decoded
 - streaming response body limits are enforced separately from request-byte accounting
 - omitted and oversized explicit response body limits clamp to a safe default instead of unbounded reads
 - fail-closed empty policy behavior

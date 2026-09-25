@@ -11,7 +11,7 @@ use ironclaw_host_api::{
 use ironclaw_network::{
     DEFAULT_RESPONSE_BODY_LIMIT, NetworkHttpEgress, NetworkHttpError, NetworkHttpRequest,
     NetworkHttpResponse, NetworkHttpTransport, NetworkResolver, NetworkTransportRequest,
-    NetworkUsage, PolicyNetworkHttpEgress, ReqwestNetworkTransport,
+    NetworkUsage, OutboundIdentity, PolicyNetworkHttpEgress, ReqwestNetworkTransport,
 };
 
 #[tokio::test]
@@ -470,6 +470,215 @@ async fn reqwest_transport_forwards_all_headers_to_http_client() {
 }
 
 #[tokio::test]
+async fn reqwest_transport_sends_chrome_header_set_by_default() {
+    // With no User-Agent at all, many sites (Wikipedia, image hosts, CDNs)
+    // answer 403. By default every request carries a complete, current Chrome
+    // header set: a User-Agent alone, or one whose version disagrees with the
+    // `Sec-CH-UA` client hints, is itself a strong bot signal.
+    let (url, request_bytes, server) =
+        captured_request_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let transport = ReqwestNetworkTransport::new(Duration::from_secs(2));
+
+    let response = transport
+        .execute(loopback_transport_request(url, vec![]))
+        .await
+        .expect("transport should send the default header set");
+    server.join().unwrap();
+
+    let raw_request = String::from_utf8(request_bytes.lock().unwrap().clone()).unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        header_values(&raw_request, "user-agent"),
+        vec![CHROME_USER_AGENT]
+    );
+    assert_eq!(
+        header_values(&raw_request, "sec-ch-ua"),
+        vec![r#""Chromium";v="151", "Google Chrome";v="151", "Not)A;Brand";v="8""#]
+    );
+    assert_eq!(header_values(&raw_request, "sec-ch-ua-mobile"), vec!["?0"]);
+    assert_eq!(
+        header_values(&raw_request, "sec-ch-ua-platform"),
+        vec![r#""Windows""#]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept"),
+        vec![
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+        ]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept-language"),
+        vec!["en-US,en;q=0.9"]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept-encoding"),
+        vec!["gzip, deflate, br, zstd"]
+    );
+}
+
+#[tokio::test]
+async fn reqwest_transport_naomi_identity_sends_descriptive_header_set() {
+    // The alternative to impersonating Chrome: name the client honestly, with
+    // a contact URL, and send Firefox's header values — Firefox sends no
+    // client hints, so none may accompany a non-Chrome User-Agent.
+    let (url, request_bytes, server) =
+        captured_request_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let transport =
+        ReqwestNetworkTransport::new(Duration::from_secs(2)).with_identity(OutboundIdentity::Naomi);
+
+    transport
+        .execute(loopback_transport_request(url, vec![]))
+        .await
+        .expect("transport should send the Naomi header set");
+    server.join().unwrap();
+
+    let raw_request = String::from_utf8(request_bytes.lock().unwrap().clone()).unwrap();
+    assert_eq!(
+        header_values(&raw_request, "user-agent"),
+        vec![expected_naomi_user_agent()]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept"),
+        vec![
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        ]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept-language"),
+        vec!["en-US,en;q=0.5"]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept-encoding"),
+        vec!["gzip, deflate, br, zstd"]
+    );
+    assert!(
+        !raw_request.to_ascii_lowercase().contains("\r\nsec-ch-ua"),
+        "client hints belong to Chrome User-Agents only; got {raw_request:?}"
+    );
+}
+
+#[tokio::test]
+async fn reqwest_transport_caller_headers_override_default_header_set() {
+    // The defaults fill gaps; they never duplicate or replace a header the
+    // caller chose (an API that needs `accept: application/vnd.github+json`).
+    let (url, request_bytes, server) =
+        captured_request_server("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    let transport = ReqwestNetworkTransport::new(Duration::from_secs(2));
+
+    transport
+        .execute(loopback_transport_request(
+            url,
+            vec![
+                ("user-agent".to_string(), "custom-agent/1.0".to_string()),
+                (
+                    "accept".to_string(),
+                    "application/vnd.github+json".to_string(),
+                ),
+            ],
+        ))
+        .await
+        .expect("transport should send caller headers");
+    server.join().unwrap();
+
+    let raw_request = String::from_utf8(request_bytes.lock().unwrap().clone()).unwrap();
+    assert_eq!(
+        header_values(&raw_request, "user-agent"),
+        vec!["custom-agent/1.0"]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept"),
+        vec!["application/vnd.github+json"]
+    );
+    assert_eq!(
+        header_values(&raw_request, "accept-language"),
+        vec!["en-US,en;q=0.9"]
+    );
+}
+
+#[tokio::test]
+async fn reqwest_transport_decodes_compressed_response_bodies() {
+    // Advertising an encoding the client cannot decode would hand callers
+    // compressed bytes as if they were the body; every advertised encoding
+    // must be decoded before the body reaches the caller.
+    let gzip_body: &[u8] = &[
+        31, 139, 8, 0, 0, 0, 0, 0, 2, 3, 75, 73, 77, 206, 79, 73, 77, 81, 72, 170, 84, 200, 75,
+        204, 207, 205, 4, 0, 73, 177, 219, 23, 16, 0, 0, 0,
+    ];
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+        gzip_body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(gzip_body);
+    let (url, _request_bytes, server) = captured_request_server(response);
+    let transport = ReqwestNetworkTransport::new(Duration::from_secs(2));
+
+    let response = transport
+        .execute(loopback_transport_request(url, vec![]))
+        .await
+        .expect("transport should decode a gzip response");
+    server.join().unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, b"decoded by naomi");
+    assert!(
+        !response
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-encoding")),
+        "a decoded body must not still be labelled as encoded"
+    );
+}
+
+#[tokio::test]
+async fn http_egress_redirect_hop_keeps_default_header_set() {
+    // Caller headers never follow a redirect (credential safety), so the
+    // identity headers must come from the transport itself — otherwise every
+    // CDN hop would arrive with no User-Agent and be refused.
+    let (final_url, final_request_bytes, final_server) =
+        captured_request_server("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nfollowed!");
+    let (start_url, start_request_bytes, start_server) = captured_request_server(format!(
+        "HTTP/1.1 302 Found\r\nLocation: {final_url}\r\nContent-Length: 0\r\n\r\n"
+    ));
+    let egress = PolicyNetworkHttpEgress::new(ReqwestNetworkTransport::new(Duration::from_secs(2)));
+
+    let response = egress
+        .execute(NetworkHttpRequest {
+            scope: sample_scope(),
+            method: NetworkMethod::Get,
+            url: start_url,
+            headers: vec![("authorization".to_string(), "Bearer sk-secret".to_string())],
+            body: vec![],
+            policy: policy("127.0.0.1", None, false, None),
+            response_body_limit: Some(1024),
+            timeout_ms: None,
+        })
+        .await
+        .expect("an allowlisted redirect should be followed");
+    start_server.join().unwrap();
+    final_server.join().unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, b"followed!");
+    let start_request = String::from_utf8(start_request_bytes.lock().unwrap().clone()).unwrap();
+    let final_request = String::from_utf8(final_request_bytes.lock().unwrap().clone()).unwrap();
+    assert_eq!(
+        header_values(&start_request, "authorization"),
+        vec!["Bearer sk-secret"]
+    );
+    assert!(header_values(&final_request, "authorization").is_empty());
+    for raw_request in [&start_request, &final_request] {
+        assert_eq!(
+            header_values(raw_request, "user-agent"),
+            vec![CHROME_USER_AGENT]
+        );
+        assert_eq!(header_values(raw_request, "sec-ch-ua").len(), 1);
+        assert_eq!(header_values(raw_request, "accept").len(), 1);
+        assert_eq!(header_values(raw_request, "accept-language").len(), 1);
+    }
+}
+
+#[tokio::test]
 async fn reqwest_transport_uses_all_resolved_addresses_for_connection_fallback() {
     let (url, server) = single_response_server_for_host(
         "fallback.example.test",
@@ -788,13 +997,51 @@ fn sample_request(url: &str) -> NetworkHttpRequest {
     }
 }
 
+/// The default outbound User-Agent. Spelled out here, not imported, so
+/// changing it is a deliberate act.
+const CHROME_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+
+/// The descriptive User-Agent of `OutboundIdentity::Naomi`.
+fn expected_naomi_user_agent() -> String {
+    let naomi_version = include_str!("../../../../.naomi-version").trim();
+    format!("Naomi/{naomi_version} (IronClaw; +https://github.com/CjS77/ironclaw)")
+}
+
+/// Values of every header named `name` in a raw HTTP/1.1 request head.
+fn header_values<'a>(raw_request: &'a str, name: &str) -> Vec<&'a str> {
+    raw_request
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(header_name, _)| header_name.trim().eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.trim())
+        .collect()
+}
+
+fn loopback_transport_request(
+    url: String,
+    headers: Vec<(String, String)>,
+) -> NetworkTransportRequest {
+    NetworkTransportRequest {
+        method: NetworkMethod::Get,
+        url,
+        headers,
+        body: vec![],
+        resolved_ips: vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
+        response_body_limit: Some(1024),
+        timeout_ms: None,
+    }
+}
+
 fn single_response_server(response: &'static str) -> (String, std::thread::JoinHandle<()>) {
     single_response_server_for_host("127.0.0.1", response)
 }
 
 fn captured_request_server(
-    response: &'static str,
+    response: impl Into<Vec<u8>>,
 ) -> (String, Arc<Mutex<Vec<u8>>>, std::thread::JoinHandle<()>) {
+    let response = response.into();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let request_bytes = Arc::new(Mutex::new(Vec::new()));
@@ -807,7 +1054,7 @@ fn captured_request_server(
             .lock()
             .unwrap()
             .extend_from_slice(&request[..bytes_read]);
-        stream.write_all(response.as_bytes()).unwrap();
+        stream.write_all(&response).unwrap();
     });
     (
         format!("http://127.0.0.1:{port}/test"),

@@ -26,7 +26,8 @@ crate that needed even the policy types.
   `NetworkHttpTransport` (`egress`).
 - Resolution: `NetworkResolver` (`resolver`) — denies private and reserved
   addresses before a connection opens.
-- Transport: `ReqwestNetworkTransport` (`transport`).
+- Transport: `ReqwestNetworkTransport` (`transport`), with the default
+  request header set chosen by `OutboundIdentity` (Chrome by default).
 - Types: `NetworkRequest`, `NetworkHttpRequest`/`NetworkHttpResponse`,
   `NetworkUsage`, `DEFAULT_RESPONSE_BODY_LIMIT` (`types`); `NetworkHttpError`
   (`error`).

@@ -18,6 +18,8 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 - IronHub downloads and their redirect hops may reach only `hub.ironclaw.com`, `github.com`, `release-assets.githubusercontent.com` and `objects.githubusercontent.com`; the `*.githubusercontent.com` wildcard, `raw.githubusercontent.com` and `github-releases.githubusercontent.com` are no longer allowed
 
 ### Fixed
+- Outbound HTTP requests (web search, the `http` tool, downloads) now send a full browser header set — by default Chrome 151's User-Agent, `Sec-CH-UA` client hints, `Accept`, `Accept-Language` and `Accept-Encoding` — where before they sent no User-Agent at all and many sites refused them; compressed responses are decoded. A descriptive `Naomi/<version> (IronClaw; +https://github.com/CjS77/ironclaw)` identity is available as `OutboundIdentity::Naomi`
+- The `http` tool description now says redirects are followed (each hop re-checked against the network policy) instead of claiming they are returned unfollowed
 - `ironclaw ironhub` CLI commands and hub-delivered installs now reach the network; previously no network policy was granted to them and every download was refused before it was sent
 
 ## [v1.4.0-naomi.0.3] - 2026-09-24
