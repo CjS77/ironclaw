@@ -324,7 +324,7 @@ pub(crate) struct RebornRuntimeStores {
         Arc<ironclaw_extension_host::FilesystemChannelDmTargetStore>,
     pub(crate) channel_disconnect_slot:
         Arc<std::sync::OnceLock<Arc<dyn ironclaw_auth::ChannelConnectionService>>>,
-    pub(crate) runtime_http_egress: Option<Arc<dyn RuntimeHttpEgress>>,
+    pub(crate) ironhub_http_egress: Option<Arc<dyn RuntimeHttpEgress>>,
     pub(crate) ironhub_link_state: Arc<ironclaw_extension_manager::ironhub::IronhubLinkStateStore>,
     pub(crate) memory_mounts: MountView,
     pub(crate) system_extensions_lifecycle_mounts: MountView,

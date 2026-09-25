@@ -79,6 +79,60 @@ Approving in chat cannot install a community entry (provenance `New`). The model
 
 ---
 
+## Using your own catalog
+
+Operators can point IronClaw at a catalog other than hub.ironclaw.com, such as a curated catalog published as GitHub release assets.
+
+### Catalog URL
+
+Set `IRONHUB_MANIFEST_URL` to the HTTPS URL of the signed catalog envelope:
+
+```bash
+export IRONHUB_MANIFEST_URL="https://github.com/CjS77/naomi-addons/releases/download/<tag>/manifest.json"
+```
+
+When it is unset, IronClaw uses `https://hub.ironclaw.com/api/catalog/manifest.json`.
+
+The catalog URL, every private manifest URL, and every artifact URL listed in a catalog must start with one of these hardcoded prefixes:
+
+| Prefix | Serves |
+|--------|--------|
+| `https://hub.ironclaw.com/` | The upstream IronHub catalog and its artifact proxy |
+| `https://github.com/CjS77/naomi-addons/releases/download/` | The Naomi catalog, published as release assets |
+
+The match is exact and case-sensitive: `https` only, no user name or password, the default port, and no percent-encoded `/` or `\` in the path. A catalog URL outside the list is refused at startup. An artifact URL outside it is refused before anything is downloaded, even when the catalog's signature is valid. The list is compiled into the binary (`IRONHUB_URL_PREFIXES` in `crates/extensions/ironclaw_extension_manager/src/ironhub/artifact_hosts.rs`) and has no runtime setting.
+
+### Signing keys
+
+The catalog is a JSON envelope `{v, key_id, manifest_b64, sig}`. IronClaw looks up `key_id` in the verify keys compiled into the binary (`MANIFEST_VERIFY_KEYS` in `crates/extensions/ironclaw_extension_manager/src/ironhub/model.rs`) and checks `sig` over the decoded manifest bytes with strict Ed25519 verification. A catalog signed by any other key is refused. There is no runtime setting for verify keys; a new key means a new build.
+
+The binary trusts two keys: the upstream IronHub key (`5895a21abea89672`) and the Naomi catalog key (`93f44233e7e0e589`).
+
+To add a key, generate an Ed25519 key pair with your signing tooling. Then add a `("<key_id>", "<public key>")` tuple to `MANIFEST_VERIFY_KEYS` next to the existing entries, and rebuild. No other code change is needed.
+
+- The public key is the raw 32-byte Ed25519 public key, hex-encoded.
+- The `key_id` is the first 8 bytes of SHA-256 over that public key, hex-encoded. The signer must write the same `key_id` into each envelope.
+- Keep the secret key with the signer. Never commit it.
+
+A unit test checks that every entry's `key_id` matches its public key, so a mis-pasted tuple fails the build rather than silently rejecting your catalog.
+
+### Downloads and redirects
+
+IronHub downloads, and every redirect hop they take, may only reach these exact hosts. There are no wildcards:
+
+- `hub.ironclaw.com`
+- `github.com`
+- `release-assets.githubusercontent.com`
+- `objects.githubusercontent.com`
+
+GitHub answers a release-asset download with a redirect to one of the two `githubusercontent.com` hosts, so a Naomi catalog on GitHub works. A redirect to any other host is refused, including other `githubusercontent.com` hosts such as `raw.githubusercontent.com`. The same host list applies whether the download starts from the CLI, from the agent's IronHub tools, or from an install pushed by the hub.
+
+Redirect hops are checked by host only, not by path. The prefix list above applies to the URL a download starts at.
+
+Redirects never loosen the integrity checks. Each artifact's final bytes must still match the byte count and SHA-256 digest recorded in the signed catalog.
+
+---
+
 ## Where things are installed
 
 | Package | Destination                                       |

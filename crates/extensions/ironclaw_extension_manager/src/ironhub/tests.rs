@@ -1,7 +1,7 @@
 // arch-exempt: large_file, bundled-skill verification and install regressions reuse the centralized signed-catalog lifecycle fixtures, plan #4088
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hmac::{Hmac, KeyInit, Mac};
 use ironclaw_extension_registry::{ExtensionInstallationStorePort, InstallationOwner};
 use ironclaw_filesystem::{
@@ -43,6 +43,7 @@ use super::link_service::{
 use super::model::{
     IronHubArtifact, IronHubCommand, IronHubCommandError, IronHubEntryKind, IronHubInstallOptions,
     IronHubManifest, IronHubPhase, IronHubProvenance, IronHubSkillEntry, IronHubSkillFile,
+    MANIFEST_VERIFY_KEYS,
 };
 use super::service::{
     IronHubService, RebornIronHubRuntime, clear_test_manifest_cache, configure_test_catalog,
@@ -396,6 +397,74 @@ fn manifest_url_validation_rejects_non_https_and_preserves_valid_urls() {
     let value = "https://hub.ironclaw.com/manifest.json";
     let validated = validated_manifest_url(value).expect("HTTPS manifest URL");
     assert_eq!(validated.as_str(), value);
+
+    let naomi = "https://github.com/CjS77/naomi-addons/releases/download/v1/manifest.json";
+    assert_eq!(
+        validated_manifest_url(naomi)
+            .expect("Naomi release manifest URL")
+            .as_str(),
+        naomi
+    );
+    for off_whitelist in [
+        "https://github.com/attacker/repo/releases/download/v1/manifest.json",
+        "https://raw.githubusercontent.com/CjS77/naomi-addons/main/manifest.json",
+        "https://catalog.example/api/catalog/manifest.json",
+    ] {
+        assert!(
+            validated_manifest_url(off_whitelist).is_err(),
+            "{off_whitelist} must be refused as IRONHUB_MANIFEST_URL"
+        );
+    }
+}
+
+/// A correctly signed catalog cannot point an install at a GitHub path outside
+/// the whitelist: the artifact is refused before any request is made for it.
+#[tokio::test]
+async fn signed_catalog_artifact_outside_the_whitelist_is_never_fetched() {
+    let owner = "ironhub-whitelist-artifact-owner";
+    let services =
+        crate::lifecycle_test_support::build_lifecycle_test_services(owner, None, false).await;
+    let scope = crate::lifecycle_test_support::webui_gate_resource_scope_for_owner(owner);
+    let manifest_url = "https://github.com/CjS77/naomi-addons/releases/download/v2/manifest.json";
+    clear_test_manifest_cache(manifest_url);
+    let artifact_url = "https://github.com/attacker/repo/releases/download/v1/SKILL.md";
+    let artifact = b"---\nname: fixture\ndescription: fixture\n---\n# Fixture\n";
+    let mut manifest = skill_manifest("fixture", artifact_url, artifact, "2026-01-01T00:00:00Z");
+    manifest.skills[0].provenance = IronHubProvenance::Official;
+    let envelope = signed_manifest(
+        serde_json::to_string(&manifest).expect("manifest JSON"),
+        &test_signing_key(),
+    );
+    let egress = Arc::new(RecordingEgress::new([(manifest_url, envelope)]));
+    let service = configure_test_catalog(
+        IronHubService::new_with_runtime_egress(
+            services.skill_management,
+            services.extension_management,
+            Arc::clone(&egress) as Arc<dyn RuntimeHttpEgress>,
+            scope,
+            CapabilityId::new(super::IRONHUB_INSTALL_CAPABILITY_ID).expect("capability id"),
+            test_link_state(),
+        ),
+        manifest_url,
+        test_manifest_verify_keys(),
+    );
+
+    let error = service
+        .execute(install_named_command(
+            "fixture",
+            IronHubEntryKind::Skill,
+            false,
+        ))
+        .await
+        .expect_err("an off-whitelist artifact must be refused");
+
+    assert!(
+        error
+            .to_string()
+            .contains("not on the IronHub download whitelist"),
+        "got {error}"
+    );
+    assert_eq!(egress.requests().len(), 1, "only the catalog was fetched");
 }
 
 #[test]
@@ -439,6 +508,99 @@ fn signed_catalog_verification_rejects_bad_signature() {
     let error = verify_signed_manifest_with_keys(envelope.as_bytes(), &[("test-key", &verify_key)])
         .expect_err("signature from another key must fail closed");
     assert_eq!(error, "manifest signature verification failed");
+}
+
+/// The catalog `key_id` convention for a manifest verify key: the first 8 bytes
+/// of SHA-256 over the raw 32-byte public key, hex-encoded.
+fn manifest_verify_key_id(verifying_key: &VerifyingKey) -> String {
+    hex::encode(&<sha2::Sha256 as sha2::Digest>::digest(verifying_key.as_bytes())[..8])
+}
+
+/// Guards the operator step of adding a key: every compiled-in entry must be a
+/// valid ed25519 point whose id follows the `key_id` convention, so a
+/// mis-pasted tuple fails here instead of silently rejecting the catalog.
+#[test]
+fn compiled_manifest_verify_keys_are_valid_and_ids_match_their_keys() {
+    assert!(!MANIFEST_VERIFY_KEYS.is_empty());
+    for (key_id, key_hex) in MANIFEST_VERIFY_KEYS {
+        let raw: [u8; 32] = hex::decode(key_hex)
+            .expect("verify key is hex")
+            .try_into()
+            .expect("verify key is 32 bytes");
+        let verifying_key = VerifyingKey::from_bytes(&raw).expect("verify key is a valid point");
+        assert_eq!(
+            *key_id,
+            manifest_verify_key_id(&verifying_key),
+            "key_id for {key_hex} must follow the key_id convention"
+        );
+    }
+}
+
+/// A catalog signed by an operator-generated key verifies once its
+/// `(key_id, public key)` tuple sits beside the upstream entries, with no other
+/// change: this drives the service's real fetch-and-verify path.
+#[tokio::test]
+async fn catalog_signed_by_an_added_custom_key_verifies() {
+    let custom_key = SigningKey::from_bytes(&[42_u8; 32]);
+    let custom_id = manifest_verify_key_id(&custom_key.verifying_key());
+    let custom_hex = hex::encode(custom_key.verifying_key().as_bytes());
+    let mut keys = MANIFEST_VERIFY_KEYS.to_vec();
+    keys.push((
+        Box::leak(custom_id.clone().into_boxed_str()),
+        Box::leak(custom_hex.into_boxed_str()),
+    ));
+    let keys: &'static [(&'static str, &'static str)] = Box::leak(keys.into_boxed_slice());
+
+    let owner = "ironhub-custom-key-owner";
+    let services =
+        crate::lifecycle_test_support::build_lifecycle_test_services(owner, None, false).await;
+    let scope = crate::lifecycle_test_support::webui_gate_resource_scope_for_owner(owner);
+    let manifest_url = "https://github.com/CjS77/naomi-addons/releases/download/v1/manifest.json";
+    clear_test_manifest_cache(manifest_url);
+    let (manifest_json, expected_names) = catalog_manifest_json("custom-key", 1, 1, "custom");
+    let service_with = |envelope: Vec<u8>, keys| {
+        configure_test_catalog(
+            IronHubService::new_with_runtime_egress(
+                Arc::clone(&services.skill_management),
+                Arc::clone(&services.extension_management),
+                Arc::new(RecordingEgress::new([(manifest_url, envelope)])),
+                scope.clone(),
+                CapabilityId::new(super::IRONHUB_SEARCH_CAPABILITY_ID).expect("capability id"),
+                test_link_state(),
+            ),
+            manifest_url,
+            keys,
+        )
+    };
+
+    let envelope = signed_manifest_with_key_id(manifest_json.clone(), &custom_key, &custom_id);
+    let response = service_with(envelope, keys)
+        .execute(IronHubCommand::List { kind: None })
+        .await
+        .expect("catalog signed by the added key verifies");
+    let mut listed = response
+        .entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
+    listed.sort();
+    let mut expected = expected_names;
+    expected.sort();
+    assert_eq!(listed, expected);
+
+    // The same key id with a different signer still fails `verify_strict`.
+    clear_test_manifest_cache(manifest_url);
+    let forged = signed_manifest_with_key_id(manifest_json, &test_signing_key(), &custom_id);
+    let error = service_with(forged, keys)
+        .execute(IronHubCommand::List { kind: None })
+        .await
+        .expect_err("a signature from another key under the added id must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("manifest signature verification failed"),
+        "got {error}"
+    );
 }
 
 fn skill_manifest_with_files(files: Vec<IronHubSkillFile>) -> IronHubManifest {
@@ -2249,10 +2411,18 @@ pub(super) fn test_manifest_verify_keys() -> &'static [(&'static str, &'static s
 }
 
 fn signed_manifest(manifest_json: String, signing_key: &SigningKey) -> Vec<u8> {
+    signed_manifest_with_key_id(manifest_json, signing_key, "ironhub-test-key")
+}
+
+fn signed_manifest_with_key_id(
+    manifest_json: String,
+    signing_key: &SigningKey,
+    key_id: &str,
+) -> Vec<u8> {
     let signature = signing_key.sign(manifest_json.as_bytes());
     serde_json::json!({
         "v": 1,
-        "key_id": "ironhub-test-key",
+        "key_id": key_id,
         "manifest_b64": URL_SAFE_NO_PAD.encode(manifest_json.as_bytes()),
         "sig": URL_SAFE_NO_PAD.encode(signature.to_bytes()),
     })
