@@ -34,8 +34,15 @@ const PNG_BYTES: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2, 3, 4];
 
 /// (a) Single-turn greeting: the one inference call's full payload + the exact
 /// final reply. Pins the base system-prompt construction and text-turn shape.
-#[tokio::test]
-async fn golden_single_turn_greeting() {
+#[test]
+fn golden_single_turn_greeting() {
+    run_async_test_with_stack(
+        "golden_single_turn_greeting",
+        golden_single_turn_greeting_body,
+    );
+}
+
+async fn golden_single_turn_greeting_body() {
     let h = RebornIntegrationHarness::test_default()
         .script([RebornScriptedReply::text("Hello! How can I help?")])
         .build()
@@ -48,11 +55,15 @@ async fn golden_single_turn_greeting() {
         .expect("final reply matches exactly");
 }
 
-/// (b) Tool-call turn: both inference iterations exact-matched (initial call
-/// + post-tool-result call), pinning that `tool_calls[].id` matches the
-/// following `tool` message's `tool_call_id`.
-#[tokio::test]
-async fn golden_tool_call_feedback() {
+/// (b) Tool-call turn: both inference iterations exact-matched (the initial
+/// call and the post-tool-result call), pinning that `tool_calls[].id` matches
+/// the following `tool` message's `tool_call_id`.
+#[test]
+fn golden_tool_call_feedback() {
+    run_async_test_with_stack("golden_tool_call_feedback", golden_tool_call_feedback_body);
+}
+
+async fn golden_tool_call_feedback_body() {
     let h = RebornIntegrationHarness::test_default()
         .with_builtin_http_tools()
         .script([
@@ -72,8 +83,12 @@ async fn golden_tool_call_feedback() {
 /// (c) Multi-turn (two user turns): the second turn's inference call carries the
 /// accumulated history (turn-1 user + assistant reply + turn-2 user). Golden
 /// pins history/turns accumulation across turns.
-#[tokio::test]
-async fn golden_multi_turn_history() {
+#[test]
+fn golden_multi_turn_history() {
+    run_async_test_with_stack("golden_multi_turn_history", golden_multi_turn_history_body);
+}
+
+async fn golden_multi_turn_history_body() {
     let h = RebornIntegrationHarness::test_default()
         .script([
             RebornScriptedReply::text("First reply"),
@@ -109,8 +124,12 @@ async fn golden_multi_turn_history() {
 /// builtin capability surface, on one plain-text turn. Pins byte-for-byte how
 /// the two sections render together in the system prompt — ordering/duplication
 /// a substring check like `assert_model_request_contains` cannot see.
-#[tokio::test]
-async fn golden_context_surfacing() {
+#[test]
+fn golden_context_surfacing() {
+    run_async_test_with_stack("golden_context_surfacing", golden_context_surfacing_body);
+}
+
+async fn golden_context_surfacing_body() {
     let provider = RecordingCommunicationContextProvider::with_notification_count_and_channel(
         1,
         "reborn-golden-channel",
@@ -137,8 +156,15 @@ async fn golden_context_surfacing() {
 /// This integration test first creates its own file fixture through the real
 /// write capability, then pins descriptor classification, composition wiring,
 /// durable result persistence, exact dispatch count, and input-order replay.
-#[tokio::test]
-async fn golden_parallel_tool_calls() {
+#[test]
+fn golden_parallel_tool_calls() {
+    run_async_test_with_stack(
+        "golden_parallel_tool_calls",
+        golden_parallel_tool_calls_body,
+    );
+}
+
+async fn golden_parallel_tool_calls_body() {
     let h = RebornIntegrationHarness::test_default()
         .with_durable_capability_io_file_tools()
         .script([
@@ -182,8 +208,15 @@ async fn golden_parallel_tool_calls() {
 /// renders alongside the text part — complements
 /// `tests/reborn_integration_attach.rs`'s substring check by catching drift in
 /// part ordering/shape a substring check can't see.
-#[tokio::test]
-async fn golden_image_attachment_turn() {
+#[test]
+fn golden_image_attachment_turn() {
+    run_async_test_with_stack(
+        "golden_image_attachment_turn",
+        golden_image_attachment_turn_body,
+    );
+}
+
+async fn golden_image_attachment_turn_body() {
     let group = RebornIntegrationGroup::attachment_tools()
         .await
         .expect("attachment-tools group builds");
@@ -213,8 +246,12 @@ async fn golden_image_attachment_turn() {
 /// captured inference calls around the gate, pinning that a resume doesn't
 /// silently drop, duplicate, or reorder history. Distinct from (b): this one
 /// actually parks on `TurnStatus::BlockedApproval` between the two calls.
-#[tokio::test]
-async fn golden_gated_turn_approve() {
+#[test]
+fn golden_gated_turn_approve() {
+    run_async_test_with_stack("golden_gated_turn_approve", golden_gated_turn_approve_body);
+}
+
+async fn golden_gated_turn_approve_body() {
     let group = RebornIntegrationGroup::live_approvals()
         .await
         .expect("live-approvals group builds");
@@ -257,3 +294,29 @@ async fn golden_gated_turn_approve() {
 // strategy; exercising it here needs a production fix (out of scope) or a
 // fragile multi-thousand-token scripted transcript that breaks golden-snapshot
 // reviewability.
+
+/// Run an async test body on a dedicated thread with a 16 MiB stack. A whole
+/// turn through this harness polls deep enough to overflow libtest's default
+/// 2 MiB test-thread stack in debug builds (boxing the future is not enough),
+/// and local runs set no `RUST_MIN_STACK`. Same helper as `tool_call.rs`,
+/// `skill_activate.rs` and `outbound_target.rs`, which each carry a copy.
+fn run_async_test_with_stack<F, Fut>(name: &'static str, test: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio test runtime")
+                .block_on(test());
+        })
+        .expect("spawn stack-sized test thread");
+    if let Err(panic) = handle.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
