@@ -678,12 +678,26 @@ test("locale packs include workspace labels and accept a formatted size", () => 
   for (const locale of LOCALES) {
     const pack = loadLocalePack(locale);
     for (const key of [
+      "workspace.breadcrumbRoot",
       "workspace.area.home",
       "workspace.area.memory",
       "workspace.downloadFailed",
     ]) {
       assert.equal(typeof pack[key], "string", `${locale} missing ${key}`);
       assert.notEqual(pack[key].trim(), "", `${locale} ${key} should not be empty`);
+    }
+    // The file-browser root sits above the "workspace" area, so the two must
+    // never read as the same folder.
+    assert.notEqual(
+      pack["workspace.breadcrumbRoot"].toLocaleLowerCase(),
+      pack["workspace.area.home"].toLocaleLowerCase(),
+      `${locale} file-browser root and workspace area must have distinct labels`,
+    );
+    if (locale === "en") {
+      // Area labels mirror the agent's own paths (/workspace, /memory).
+      assert.equal(pack["workspace.breadcrumbRoot"], "Root");
+      assert.equal(pack["workspace.area.home"], "Workspace");
+      assert.equal(pack["workspace.area.memory"], "Memory");
     }
     assert.equal(
       pack["workspace.fileMeta"],
