@@ -29,7 +29,7 @@ pub use test_rewrite::{
     HostRewriteMap, HostRewriteMapError, RewriteNetworkTransport, TEST_HTTP_REWRITE_MAP_ENV,
     default_policy_http_egress,
 };
-pub use transport::ReqwestNetworkTransport;
+pub use transport::{OutboundIdentity, ReqwestNetworkTransport};
 pub use types::{
     DEFAULT_RESPONSE_BODY_LIMIT, NetworkHttpRequest, NetworkHttpResponse, NetworkRequest,
     NetworkTransportRequest, NetworkUsage,

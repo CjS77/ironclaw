@@ -23,6 +23,7 @@ const MAX_REQWEST_CLIENT_CACHE_ENTRIES: usize = 128;
 #[derive(Clone)]
 pub struct ReqwestNetworkTransport {
     timeout: Duration,
+    identity: OutboundIdentity,
     client_cache: Arc<Mutex<HashMap<ReqwestClientKey, reqwest::Client>>>,
 }
 
@@ -38,6 +39,7 @@ impl std::fmt::Debug for ReqwestNetworkTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReqwestNetworkTransport")
             .field("timeout", &self.timeout)
+            .field("identity", &self.identity)
             .finish_non_exhaustive()
     }
 }
@@ -52,8 +54,15 @@ impl ReqwestNetworkTransport {
     pub fn new(timeout: Duration) -> Self {
         Self {
             timeout,
+            identity: OutboundIdentity::default(),
             client_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Sends `identity`'s header set instead of the default Chrome one.
+    pub fn with_identity(mut self, identity: OutboundIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 
     async fn client_for(
@@ -76,18 +85,20 @@ impl ReqwestNetworkTransport {
         }
 
         let build_key = key.clone();
-        let client = tokio::task::spawn_blocking(move || build_reqwest_client(&build_key))
-            .await
-            .map_err(|error| NetworkHttpError::Transport {
-                reason: format!("reqwest client builder task failed: {error}"),
-                request_bytes,
-                response_bytes: 0,
-            })?
-            .map_err(|error| NetworkHttpError::Transport {
-                reason: reqwest_error_diagnostic(&error),
-                request_bytes,
-                response_bytes: 0,
-            })?;
+        let identity = self.identity;
+        let client =
+            tokio::task::spawn_blocking(move || build_reqwest_client(&build_key, identity))
+                .await
+                .map_err(|error| NetworkHttpError::Transport {
+                    reason: format!("reqwest client builder task failed: {error}"),
+                    request_bytes,
+                    response_bytes: 0,
+                })?
+                .map_err(|error| NetworkHttpError::Transport {
+                    reason: reqwest_error_diagnostic(&error),
+                    request_bytes,
+                    response_bytes: 0,
+                })?;
 
         let mut cache = self
             .client_cache
@@ -104,9 +115,105 @@ impl ReqwestNetworkTransport {
     }
 }
 
-fn build_reqwest_client(key: &ReqwestClientKey) -> Result<reqwest::Client, reqwest::Error> {
+/// The header set a request carries for any header the caller did not set.
+///
+/// The headers sit on the client, not the request, so they also reach redirect
+/// hops, which carry no caller headers at all
+/// (`egress::clear_headers_for_next_hop`). Each variant is a complete,
+/// self-consistent set: sending a User-Agent alone, or one that disagrees with
+/// the other headers, is itself a strong bot signal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum OutboundIdentity {
+    /// Current Chrome on Windows, with the `Sec-CH-UA` client hints Chrome
+    /// sends. The client-hint version must match the User-Agent version, so
+    /// bump both together, roughly monthly as Chrome releases.
+    #[default]
+    Chrome,
+    /// `Naomi/<version> (IronClaw; +<contact URL>)`: names the client honestly,
+    /// with Firefox's header values, since Firefox sends no client hints and
+    /// they would contradict a User-Agent that does not claim to be Chrome.
+    Naomi,
+}
+
+const CHROME_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
+const CHROME_SEC_CH_UA: &str =
+    r#""Chromium";v="151", "Google Chrome";v="151", "Not)A;Brand";v="8""#;
+const CHROME_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8";
+const CHROME_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
+const FIREFOX_ACCEPT: &str =
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
+const FIREFOX_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.5";
+/// Both browsers' value. Every encoding listed is compiled into reqwest (see
+/// the manifest), which decodes the response before a caller sees the body.
+const ACCEPT_ENCODING: &str = "gzip, deflate, br, zstd";
+
+/// The fork's own version (`J.K{-suffix}`), read from the one file that owns it
+/// (AGENTS.md, "Versioning (naomi fork)").
+const NAOMI_VERSION_FILE: &str = include_str!("../../../../.naomi-version");
+const NAOMI_CONTACT_URL: &str = "https://github.com/CjS77/ironclaw";
+
+fn naomi_user_agent() -> String {
+    format!(
+        "Naomi/{} (IronClaw; +{NAOMI_CONTACT_URL})",
+        NAOMI_VERSION_FILE.trim()
+    )
+}
+
+impl OutboundIdentity {
+    fn user_agent(self) -> String {
+        match self {
+            Self::Chrome => CHROME_USER_AGENT.to_string(),
+            Self::Naomi => naomi_user_agent(),
+        }
+    }
+
+    fn default_headers(self) -> reqwest::header::HeaderMap {
+        use reqwest::header::{
+            ACCEPT, ACCEPT_ENCODING as ACCEPT_ENCODING_HEADER, ACCEPT_LANGUAGE, HeaderMap,
+            HeaderName, HeaderValue,
+        };
+
+        let mut headers = HeaderMap::new();
+        let (accept, accept_language) = match self {
+            Self::Chrome => {
+                headers.insert(
+                    HeaderName::from_static("sec-ch-ua"),
+                    HeaderValue::from_static(CHROME_SEC_CH_UA),
+                );
+                headers.insert(
+                    HeaderName::from_static("sec-ch-ua-mobile"),
+                    HeaderValue::from_static("?0"),
+                );
+                headers.insert(
+                    HeaderName::from_static("sec-ch-ua-platform"),
+                    HeaderValue::from_static(r#""Windows""#),
+                );
+                (CHROME_ACCEPT, CHROME_ACCEPT_LANGUAGE)
+            }
+            Self::Naomi => (FIREFOX_ACCEPT, FIREFOX_ACCEPT_LANGUAGE),
+        };
+        headers.insert(ACCEPT, HeaderValue::from_static(accept));
+        headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static(accept_language));
+        headers.insert(
+            ACCEPT_ENCODING_HEADER,
+            HeaderValue::from_static(ACCEPT_ENCODING),
+        );
+        headers
+    }
+}
+
+fn build_reqwest_client(
+    key: &ReqwestClientKey,
+    identity: OutboundIdentity,
+) -> Result<reqwest::Client, reqwest::Error> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .user_agent(identity.user_agent())
+        .default_headers(identity.default_headers())
+        .brotli(true)
+        .deflate(true)
+        .gzip(true)
+        .zstd(true)
         .timeout(key.timeout);
     if !key.resolved_addrs.is_empty() {
         builder = builder.resolve_to_addrs(&key.host, &key.resolved_addrs);

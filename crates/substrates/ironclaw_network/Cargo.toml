@@ -21,7 +21,10 @@ test-support = []
 async-trait = "0.1"
 ironclaw_host_api = { path = "../../contracts/ironclaw_host_api" }
 percent-encoding = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+# The compression features back the `Accept-Encoding` the transport sends: reqwest
+# advertises exactly the encodings compiled in, and decodes them before the
+# body reaches a caller.
+reqwest = { version = "0.12", default-features = false, features = ["brotli", "deflate", "gzip", "rustls-tls-native-roots", "zstd"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt"] }
 tracing = "0.1"
