@@ -61,8 +61,8 @@ self.addEventListener("push", (event) => {
       body: payload.body,
       tag: payload.tag,
       data: { url: payload.url },
-      icon: "/assets/web-app-manifest-192x192.png",
-      badge: "/assets/web-app-manifest-192x192.png",
+      icon: "/assets/web-app-manifest-192x192.webp",
+      badge: "/assets/web-app-manifest-192x192.webp",
     }),
   );
 });

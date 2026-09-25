@@ -1452,8 +1452,8 @@ mod tests {
             "assets/favicon-96x96.png",
             "assets/favicon.ico",
             "assets/apple-touch-icon.png",
-            "assets/web-app-manifest-192x192.png",
-            "assets/web-app-manifest-512x512.png",
+            "assets/web-app-manifest-192x192.webp",
+            "assets/web-app-manifest-512x512.webp",
             "assets/logo.png",
         ];
         let total_bytes = image_paths
@@ -1496,6 +1496,8 @@ mod tests {
             "assets/naomi_profile1.webp",
             "assets/naomi-typing-50px.webp",
             "assets/naomi-typing-50px-still.webp",
+            "assets/web-app-manifest-192x192.webp",
+            "assets/web-app-manifest-512x512.webp",
         ] {
             let asset = assets::lookup(path).unwrap_or_else(|| panic!("{path} is embedded"));
             assert_eq!(asset.content_type, "image/webp", "{path}");
