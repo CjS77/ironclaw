@@ -9,6 +9,8 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 
 ## [Unreleased]
 
+## [v1.4.0-naomi.0.4] - 2026-09-25
+
 ### Added
 - Naomi catalog signing key `93f44233e7e0e589` trusted alongside the upstream IronHub key
 - Hardcoded IronHub URL whitelist: the catalog URL, private manifest URLs and artifact URLs must start with `https://hub.ironclaw.com/` or `https://github.com/CjS77/naomi-addons/releases/download/`
