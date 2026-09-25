@@ -1491,6 +1491,22 @@ mod tests {
     }
 
     #[test]
+    fn embedded_webp_assets_are_served_as_image_webp() {
+        for path in [
+            "assets/naomi_profile1.webp",
+            "assets/naomi-typing-50px.webp",
+            "assets/naomi-typing-50px-still.webp",
+        ] {
+            let asset = assets::lookup(path).unwrap_or_else(|| panic!("{path} is embedded"));
+            assert_eq!(asset.content_type, "image/webp", "{path}");
+            assert!(
+                asset.bytes.starts_with(b"RIFF") && asset.bytes.get(8..12) == Some(&b"WEBP"[..]),
+                "{path}: extension, content type, and bytes must all be WebP",
+            );
+        }
+    }
+
+    #[test]
     fn pwa_manifest_uses_root_scope_and_assets() {
         let manifest = assets::lookup("assets/site.webmanifest")
             .expect("PWA manifest is embedded in the asset table");

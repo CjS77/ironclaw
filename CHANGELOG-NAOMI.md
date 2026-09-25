@@ -13,6 +13,9 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 - The WebUI file browser now uses the agent's own folder names: its top level is labelled "Root" (was "workspace"), and the area the agent calls `/workspace` is labelled "Workspace" (was "Home"), so `/workspace/media` shows as Root › Workspace › media and `/memory` as Root › Memory. All locales are updated; URLs and routes are unchanged. Root folders are still sorted by name, so in English "Memory" is now listed above "Workspace"
 - The chat "Working" indicator is now an animated picture of Naomi typing (`naomi-typing-50px.webp`, shown at 28px) instead of the animated NEAR "N" logo. Finished runs ("Worked for …") show the picture's still first frame, as does the working indicator when the browser asks for reduced motion
 
+### Fixed
+- The WebUI now serves embedded `.webp` images with `Content-Type: image/webp` (was `application/octet-stream`). Like other raster images, they are no longer run through response compression
+
 ## [v1.4.0-naomi.0.4] - 2026-09-25
 
 ### Added
