@@ -88,7 +88,7 @@ per-task observations so a broad score cannot hide a failed capability.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "catalog": {
     "generator_version": "tool-search-scale-v2",
     "seed": 7405,
@@ -116,7 +116,9 @@ per-task observations so a broad score cannot hide a failed capability.
     "discovery_turns": 1,
     "tool_calls": 3,
     "tool_search_calls": 1,
-    "tool_describe_calls": 0
+    "tool_describe_calls": 0,
+    "result_read_calls": 0,
+    "bridged_tool_calls": 0
   },
   "tokens": {
     "input": 12000,
@@ -128,15 +130,19 @@ per-task observations so a broad score cannot hide a failed capability.
     "end_to_end": 2400
   },
   "cache": {
-    "tool_definition_signature_changes": null
+    "tool_definition_signature_changes": 0,
+    "tool_bearing_model_requests": 3
   },
   "failure": null
 }
 ```
 
 `arm` is always the exact canonical `REBORN_TOOL_DISCLOSURE` selector value.
-`cache.tool_definition_signature_changes` is `null` when the provider trace
-does not expose a trustworthy signature-change count; it is never estimated.
+`cache.tool_definition_signature_changes` counts how often the SHA-256 of the
+request's `tools` array changes between consecutive tool-bearing model requests
+in one observation; the runner reads it from a loopback relay in front of the
+model endpoint. It is `null` when the relay is off or saw no tool-bearing
+request; it is never estimated.
 
 `failure`, when present, uses a stable category such as `retrieval_miss`,
 `invalid_arguments`, `authorization_denied`, `approval_blocked`,

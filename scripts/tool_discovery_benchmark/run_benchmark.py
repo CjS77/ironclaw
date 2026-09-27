@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -19,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,8 +35,8 @@ CORPUS_PATH = (
 )
 LIVE_QA_PATH = ROOT / "scripts/reborn_webui_v2_live_qa/run_live_qa.py"
 GENERATOR_VERSION = "tool-search-scale-v2"
-OBSERVATION_SCHEMA_VERSION = 2
-SUMMARY_SCHEMA_VERSION = 2
+OBSERVATION_SCHEMA_VERSION = 3
+SUMMARY_SCHEMA_VERSION = 3
 SEED = 7405
 AUTH_TOKEN = "reborn-webui-v2-live-qa-token-0123456789abcdef"
 
@@ -285,6 +288,171 @@ class McpFixture:
         return {"jsonrpc": "2.0", "id": request_id, "result": value}, 200
 
 
+def tool_definitions_signature(body: object) -> str | None:
+    """Hash the `tools` array of one model request, or None if it has none.
+
+    The array is re-serialized compactly with key order preserved, so two
+    requests hash equal exactly when their tools arrays are equal element by
+    element and in the same order (whitespace aside).
+    """
+    if not isinstance(body, dict):
+        return None
+    tools = body.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return None
+    encoded = json.dumps(tools, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def tool_definition_signature_changes(requests: list[dict[str, Any]]) -> int | None:
+    """Count changes in the advertised tools array between consecutive requests.
+
+    #6986 requires the tools array to stay byte-identical across the model
+    calls of one run, so a compliant run reports 0. Requests without a tools
+    array (for example a tools-free side call) are skipped rather than counted
+    as changes. None means no tool-bearing request was observed, so the metric
+    is unknown rather than zero.
+    """
+    signatures = [
+        request["tools_signature"]
+        for request in requests
+        if isinstance(request.get("tools_signature"), str)
+    ]
+    if not signatures:
+        return None
+    return sum(
+        current != previous
+        for previous, current in zip(signatures, signatures[1:])
+    )
+
+
+class LlmRequestRecorder:
+    """Loopback relay in front of the model endpoint that records tools hashes.
+
+    The recorded LLM trace keeps responses but not the request's tools array,
+    so the benchmark puts this relay between `ironclaw serve` and the provider.
+    It forwards every request and response unchanged (streaming responses are
+    relayed as they arrive) and keeps only a timestamp and the tools hash of
+    each model request. Headers, including credentials, are never stored.
+    """
+
+    _HOP_HEADERS = {
+        "connection", "content-length", "host", "keep-alive",
+        "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
+        "accept-encoding",
+    }
+
+    def __init__(self, upstream_base_url: str) -> None:
+        parsed = urllib.parse.urlsplit(upstream_base_url.rstrip("/"))
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(f"unsupported model base URL: {upstream_base_url!r}")
+        self.upstream_scheme = parsed.scheme
+        self.upstream_host = parsed.hostname
+        self.upstream_port = parsed.port
+        self.upstream_path = parsed.path
+        self.requests: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
+        recorder = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+                recorder.relay(self, None)
+
+            def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
+                length = int(self.headers.get("content-length", "0"))
+                recorder.relay(self, self.rfile.read(length))
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def base_url(self) -> str:
+        # Keep the upstream path so clients that append their own suffix (for
+        # example `/v1/...` when the base has none) build the same path they
+        # would against the real endpoint; the relay forwards it verbatim.
+        return f"http://127.0.0.1:{self.server.server_address[1]}{self.upstream_path}"
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def record(self, body: bytes) -> None:
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return
+        if not isinstance(payload, dict) or "messages" not in payload:
+            return
+        entry = {
+            "monotonic_ns": time.monotonic_ns(),
+            "tools_signature": tool_definitions_signature(payload),
+        }
+        with self._lock:
+            self.requests.append(entry)
+
+    def relay(self, handler: BaseHTTPRequestHandler, body: bytes | None) -> None:
+        if body is not None:
+            self.record(body)
+        connection_type = (
+            http.client.HTTPSConnection
+            if self.upstream_scheme == "https"
+            else http.client.HTTPConnection
+        )
+        connection = connection_type(
+            self.upstream_host, self.upstream_port, timeout=300
+        )
+        headers = {
+            key: value
+            for key, value in handler.headers.items()
+            if key.lower() not in self._HOP_HEADERS
+        }
+        if body is not None:
+            headers["Content-Length"] = str(len(body))
+        try:
+            connection.request(
+                handler.command, handler.path, body=body,
+                headers=headers,
+            )
+            response = connection.getresponse()
+            handler.send_response(response.status, response.reason)
+            for key, value in response.getheaders():
+                if key.lower() not in self._HOP_HEADERS:
+                    handler.send_header(key, value)
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            while True:
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                handler.wfile.flush()
+        except OSError as exc:
+            # Relay boundary: surface upstream transport failures as a 502 so
+            # the server reports a provider error instead of hanging.
+            try:
+                handler.send_error(502, f"upstream model request failed: {type(exc).__name__}")
+            except OSError:
+                pass
+        finally:
+            connection.close()
+
+
+def resolve_model_base_url(env: dict[str, str]) -> str | None:
+    """Mirror the live-QA config writer's choice of model base URL."""
+    base_url = env.get("REBORN_WEBUI_V2_LIVE_QA_LLM_BASE_URL")
+    provider_id = env.get("REBORN_WEBUI_V2_LIVE_QA_LLM_PROVIDER_ID", "nearai")
+    if provider_id != "nearai" and not base_url:
+        base_url = env.get("LIVE_OPENAI_COMPATIBLE_BASE_URL", "https://cloud-api.near.ai/v1")
+    return base_url or None
+
+
 def _request_json(base_url: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{base_url}{path}",
@@ -501,6 +669,95 @@ def first_correct_tool_call_latency_ms(
     return int((first["monotonic_ns"] / 1_000_000) - (started * 1000))
 
 
+def _int_values(values: list[object]) -> list[int]:
+    return [
+        value for value in values
+        if isinstance(value, int) and not isinstance(value, bool)
+    ]
+
+
+def _mean(values: list[int]) -> float | None:
+    return round(statistics.fmean(values), 2) if values else None
+
+
+def _median(values: list[int]) -> float | None:
+    return statistics.median(values) if values else None
+
+
+def _reported_token_counts(
+    items: list[dict[str, Any]],
+) -> tuple[list[int], list[int]]:
+    """Input and cached-input tokens, only where the provider reported usage.
+
+    A model call always consumes input, so an input count of zero (or null)
+    means the provider reported no usage for that observation; it is left
+    out rather than averaged in as zero. Cached input is taken only from
+    observations whose input was reported. Some providers report usage but
+    not cache reads, which the trace records as 0; the summary's
+    `provider_usage_available` and the doc must say which case applies.
+    """
+    inputs: list[int] = []
+    cached: list[int] = []
+    for item in items:
+        tokens = item.get("tokens") or {}
+        value = tokens.get("input")
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            continue
+        inputs.append(value)
+        cached_value = tokens.get("cached_input")
+        if isinstance(cached_value, int) and not isinstance(cached_value, bool):
+            cached.append(cached_value)
+    return inputs, cached
+
+
+def _efficiency_aggregates(items: list[dict[str, Any]]) -> dict[str, object]:
+    def counts(key: str) -> list[int]:
+        return _int_values([(item.get("counts") or {}).get(key) for item in items])
+
+    model_turns = counts("model_turns")
+    tool_search = counts("tool_search_calls")
+    tool_describe = counts("tool_describe_calls")
+    result_read = counts("result_read_calls")
+    bridged = counts("bridged_tool_calls")
+    inputs, cached = _reported_token_counts(items)
+    first_correct = _int_values([
+        (item.get("latency_ms") or {}).get("time_to_first_correct_tool_call")
+        for item in items
+    ])
+    signature_changes = _int_values([
+        (item.get("cache") or {}).get("tool_definition_signature_changes")
+        for item in items
+    ])
+    return {
+        "model_turns_mean": _mean(model_turns),
+        "model_turns_median": _median(model_turns),
+        "model_turns_max": max(model_turns) if model_turns else None,
+        "tool_search_calls_total": sum(tool_search) if tool_search else None,
+        "tool_search_calls_mean": _mean(tool_search),
+        "tool_describe_calls_total": sum(tool_describe) if tool_describe else None,
+        "tool_describe_calls_mean": _mean(tool_describe),
+        "result_read_calls_total": sum(result_read) if result_read else None,
+        "bridged_tool_calls_total": sum(bridged) if bridged else None,
+        "token_usage_observations": len(inputs),
+        "input_tokens_mean": _mean(inputs),
+        "input_tokens_median": _median(inputs),
+        "cached_input_tokens_mean": _mean(cached),
+        "cached_input_tokens_median": _median(cached),
+        "first_correct_tool_observations": len(first_correct),
+        "time_to_first_correct_tool_ms_median": _median(first_correct),
+        "time_to_first_correct_tool_ms_worst": (
+            max(first_correct) if first_correct else None
+        ),
+        "tool_definition_signature_changes_total": (
+            sum(signature_changes) if signature_changes else None
+        ),
+        "observations_with_tool_definition_changes": (
+            sum(value > 0 for value in signature_changes)
+            if signature_changes else None
+        ),
+    }
+
+
 def aggregate_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for observation in observations:
@@ -527,6 +784,7 @@ def aggregate_observations(observations: list[dict[str, Any]]) -> list[dict[str,
                 item["task"]["unauthorized_tool_leaks"] for item in items
             ),
             "failure_categories": failure_categories,
+            **_efficiency_aggregates(items),
         })
     return aggregates
 
@@ -556,6 +814,31 @@ def _trace_metrics(
                     if isinstance(call.get("arguments"), dict) else {},
                 })
     return metrics, calls
+
+
+RESULT_READ_CAPABILITY_ID = "builtin.result_read"
+
+
+def result_read_call_count(calls: list[dict[str, Any]]) -> int:
+    """Count model calls to `builtin.result_read`, direct or through `tool_call`.
+
+    The model sees the capability as the provider tool `builtin__result_read`;
+    under the bridged arm it may instead name it as the `tool_call` target in
+    either spelling. Every spelling counts once per model call.
+    """
+    target = RESULT_READ_CAPABILITY_ID.replace(".", "__")
+    return sum(
+        _attempted_target(call).replace(".", "__") == target for call in calls
+    )
+
+
+def bridged_tool_call_count(calls: list[dict[str, Any]]) -> int:
+    """Count model calls routed through the `tool_call` bridge.
+
+    Each call counts once whatever its target, including targets that do not
+    resolve; the target itself is scored separately.
+    """
+    return sum(call.get("name") == "tool_call" for call in calls)
 
 
 def discovery_turn_count(calls: list[dict[str, Any]]) -> int:
@@ -613,6 +896,7 @@ async def run_task_group(
     task: dict[str, Any],
     repetitions: list[int],
     observations_path: Path,
+    request_recorder: LlmRequestRecorder | None = None,
 ) -> list[dict[str, Any]]:
     group_name = f"{arm}-{tool_count}-{task['id']}"
     case_dir = output_dir / "cases" / group_name
@@ -652,6 +936,9 @@ async def run_task_group(
                 f"task={task['id']} repetition={repetition}", flush=True,
             )
             calls_before = len(fixture.calls)
+            requests_before = (
+                len(request_recorder.requests) if request_recorder is not None else 0
+            )
             marker = f"BENCHMARK_DONE_{case_name}".replace("-", "_")
             started = time.monotonic()
             result = await live_qa._live_chat_case(
@@ -669,6 +956,10 @@ async def run_task_group(
             )
             latency_ms = int((time.monotonic() - started) * 1000)
             calls = fixture.calls[calls_before:]
+            model_requests = (
+                request_recorder.requests[requests_before:]
+                if request_recorder is not None else []
+            )
             metrics, all_trace_calls = _trace_metrics(live_qa, trace_path)
             trace_calls = all_trace_calls[len(prior_trace_calls):]
             tool_names = [call["name"] for call in trace_calls]
@@ -709,6 +1000,8 @@ async def run_task_group(
                     "tool_search_calls": tool_names.count("tool_search"),
                     "tool_describe_calls": tool_names.count("tool_describe"),
                     "discovery_turns": discovery_turn_count(trace_calls),
+                    "result_read_calls": result_read_call_count(trace_calls),
+                    "bridged_tool_calls": bridged_tool_call_count(trace_calls),
                 },
                 "tokens": {
                     "input": _metric_delta(metrics, prior_metrics, "input_tokens"),
@@ -727,7 +1020,19 @@ async def run_task_group(
                     ),
                     "end_to_end": latency_ms,
                 },
-                "cache": {"tool_definition_signature_changes": None},
+                "cache": {
+                    "tool_definition_signature_changes": (
+                        tool_definition_signature_changes(model_requests)
+                        if request_recorder is not None else None
+                    ),
+                    "tool_bearing_model_requests": (
+                        sum(
+                            isinstance(request.get("tools_signature"), str)
+                            for request in model_requests
+                        )
+                        if request_recorder is not None else None
+                    ),
+                },
                 "ui_probe_success": result.success,
                 "installed_namespaces": len(packages),
                 "failure": None
@@ -757,6 +1062,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tool-count", action="append", type=int)
     parser.add_argument("--task", action="append", choices=[task["id"] for task in TASKS])
     parser.add_argument("--repetitions", type=int, default=4)
+    parser.add_argument(
+        "--no-request-recorder",
+        action="store_true",
+        help=(
+            "talk to the model endpoint directly; "
+            "cache.tool_definition_signature_changes is then null"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -812,23 +1125,21 @@ async def async_main(args: argparse.Namespace) -> int:
     tasks = [task for task in TASKS if not args.task or task["id"] in args.task]
     observations = load_observations(observations_path)
     completed_ids = {item["observation_id"] for item in observations}
-    for tool_count in tool_counts:
-        for arm in arms:
-            for task in tasks:
-                missing_repetitions = [
-                    repetition
-                    for repetition in range(args.repetitions)
-                    if f"{arm}:{tool_count}:{task['id']}:{repetition}" not in completed_ids
-                ]
-                if not missing_repetitions:
-                    continue
-                group = await run_task_group(
-                    live_qa, args.binary, args.output_dir, arm, tool_count,
-                    task, missing_repetitions, observations_path,
-                )
-                for observation in group:
-                    observations.append(observation)
-                    completed_ids.add(observation["observation_id"])
+    request_recorder = None
+    upstream_base_url = resolve_model_base_url(dict(os.environ))
+    if upstream_base_url is not None and not args.no_request_recorder:
+        request_recorder = LlmRequestRecorder(upstream_base_url)
+        request_recorder.start()
+        # The generated Reborn home reads this when writing config.toml.
+        os.environ["REBORN_WEBUI_V2_LIVE_QA_LLM_BASE_URL"] = request_recorder.base_url
+    try:
+        await _run_matrix(
+            live_qa, args, arms, tool_counts, tasks, observations, completed_ids,
+            observations_path, request_recorder,
+        )
+    finally:
+        if request_recorder is not None:
+            request_recorder.stop()
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "head": await git_head(),
@@ -843,6 +1154,36 @@ async def async_main(args: argparse.Namespace) -> int:
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     return 0 if all(item["task"]["completed"] for item in observations) else 1
+
+
+async def _run_matrix(
+    live_qa: Any,
+    args: argparse.Namespace,
+    arms: list[str],
+    tool_counts: list[int],
+    tasks: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    completed_ids: set[str],
+    observations_path: Path,
+    request_recorder: LlmRequestRecorder | None,
+) -> None:
+    for tool_count in tool_counts:
+        for arm in arms:
+            for task in tasks:
+                missing_repetitions = [
+                    repetition
+                    for repetition in range(args.repetitions)
+                    if f"{arm}:{tool_count}:{task['id']}:{repetition}" not in completed_ids
+                ]
+                if not missing_repetitions:
+                    continue
+                group = await run_task_group(
+                    live_qa, args.binary, args.output_dir, arm, tool_count,
+                    task, missing_repetitions, observations_path, request_recorder,
+                )
+                for observation in group:
+                    observations.append(observation)
+                    completed_ids.add(observation["observation_id"])
 
 
 def main() -> int:
