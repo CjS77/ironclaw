@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.1-rc.1] - 2026-09-20
+## [1.4.1] - 2026-09-29
 
-Patch candidate over `1.4.0`, carrying one fix.
+Stable promotion of `1.4.1-rc.2`, carrying its Google OAuth activation fix
+and a Wasmtime security update.
 
 ### Fixed
 
@@ -31,6 +32,8 @@ Patch candidate over `1.4.0`, carrying one fix.
   deployment (environment / `config.toml`) client material. Deployments that
   bake client credentials and never open the administrator form are
   unaffected — they resolve through the same path as before.
+- The WASM runtime now uses Wasmtime and WASI 48.0.3, fixing recent guest fuel
+  accounting vulnerabilities and a WASI filesystem timestamp panic.
 
 ## [1.4.0] - 2026-08-27
 
