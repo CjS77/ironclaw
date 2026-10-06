@@ -159,6 +159,92 @@ async fn bridged_mode_defers_wide_catalog_to_bridge_meta_tools() {
         .expect("deferral replaces the flat tool list, not adds to it");
 }
 
+/// A classifier that always chooses `FLAT_GITHUB_TOOL_NAME`, plus one tool
+/// that is not in the catalog, and counts how often it is asked.
+#[derive(Debug, Default)]
+struct RepoToolClassifier {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ironclaw_loop_contracts::ToolSelectionClassifier for RepoToolClassifier {
+    fn classifier_name(&self) -> &str {
+        "scripted"
+    }
+
+    async fn classify(
+        &self,
+        _request: &ironclaw_loop_contracts::ToolSelectionRequest,
+    ) -> Result<ironclaw_loop_contracts::ToolSelection, ironclaw_loop_contracts::ToolSelectionError>
+    {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ironclaw_loop_contracts::ToolSelection {
+            chosen: vec![
+                ironclaw_loop_contracts::ChosenTool::new(FLAT_GITHUB_TOOL_NAME, 0.97),
+                ironclaw_loop_contracts::ChosenTool::new("not_a_real_tool", 0.90),
+            ],
+            scorer: "scripted:v1".to_string(),
+        })
+    }
+}
+
+/// Turn-start tool selection on a deferred surface: the tool the classifier
+/// chooses for the opening request is advertised beside the bridges from the
+/// first model call, a name outside the authorized catalog is not, and the
+/// conversation's second turn reuses the recorded choice without asking the
+/// classifier again.
+#[tokio::test]
+async fn turn_start_selection_advertises_the_chosen_tool_and_reuses_it_next_turn() {
+    let classifier = std::sync::Arc::new(RepoToolClassifier::default());
+    let harness = RebornIntegrationHarness::test_default()
+        .with_tool_disclosure_bridged()
+        .with_github_issue_tools()
+        .with_tool_selection(
+            ironclaw_loop_host::ToolSelectionConfig::new(4, 8_000, classifier.clone())
+                .expect("valid selection settings"),
+        )
+        .script([
+            RebornScriptedReply::tool_call(
+                "github.get_repo",
+                serde_json::json!({"owner": "nearai", "repo": "ironclaw"}),
+            ),
+            RebornScriptedReply::text("done"),
+            RebornScriptedReply::text("done again"),
+        ])
+        .build()
+        .await
+        .expect("selection harness builds");
+
+    harness
+        .submit_turn("look up the ironclaw repository")
+        .await
+        .expect("first turn completes");
+    for name in [TOOL_SEARCH_NAME, TOOL_CALL_NAME, FLAT_GITHUB_TOOL_NAME] {
+        harness
+            .assert_model_tools_contains(name)
+            .await
+            .unwrap_or_else(|error| panic!("{name:?} must be advertised: {error}"));
+    }
+    harness
+        .assert_model_tools_excludes("not_a_real_tool")
+        .await
+        .expect("a classifier cannot add a tool outside the authorized catalog");
+    harness
+        .assert_tool_invoked("github.get_repo")
+        .await
+        .expect("the selected tool is called directly, without the discovery bridges");
+
+    harness
+        .submit_turn("and once more")
+        .await
+        .expect("second turn completes");
+    assert_eq!(
+        classifier.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the second turn rebuilds the selection from its record"
+    );
+}
+
 /// Regression for prod run df55a9c5: the model discovered the globally
 /// disabled spawn tool through `tool_search`, loaded its schema, then retried
 /// the denied invocation until the run failed. A capability excluded by the

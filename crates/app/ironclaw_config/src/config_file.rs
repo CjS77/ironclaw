@@ -97,6 +97,9 @@ pub struct RebornConfigFile {
     /// Trigger poller lifecycle settings. All fields optional; absent section
     /// leaves the worker at the compiled defaults in the composition root.
     pub trigger_poller: Option<TriggerPollerConfigSection>,
+    /// Turn-start tool selection. Absent section means selection is off
+    /// unless `REBORN_TOOL_SELECTION` turns it on.
+    pub tool_selection: Option<ToolSelectionSection>,
     /// Memory profile binding (issue #3537). Maps memory capability profiles to
     /// the extensions that serve them; absent section means every required
     /// memory profile defaults to the host-bundled native provider. The
@@ -542,6 +545,47 @@ impl BudgetSection {
         self.overestimate_factor = overestimate_factor.into();
         self
     }
+}
+
+/// `[tool_selection]` section: turn-start tool selection, which advertises
+/// the deferred tools a conversation's opening request predicts.
+///
+/// All fields are optional. Ranges and the classifier name are enforced at
+/// boot by the CLI settings layer, where `REBORN_TOOL_SELECTION` overrides
+/// `classifier`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolSelectionSection {
+    /// Which classifier chooses the tools: `off` (the default) or `jev`.
+    pub classifier: Option<String>,
+    /// Most deferred tools a conversation may select. Default 16.
+    pub max_tools: Option<usize>,
+    /// Most estimated schema tokens the selected tools may add up to.
+    /// Default 8000.
+    pub token_budget: Option<u32>,
+    /// Settings of the `jev` classifier; inert otherwise.
+    pub jev: Option<ToolSelectionJevSection>,
+}
+
+/// `[tool_selection.jev]`: Jev, a hosted classification model reached through
+/// a decisions API. Selecting it sends each conversation's opening request
+/// and every candidate tool's name, description and parameter names to the
+/// configured endpoint.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolSelectionJevSection {
+    /// The decisions endpoint: a full `https` URL with a host name and no
+    /// userinfo, query or fragment. Default: the classifier's own.
+    pub endpoint: Option<String>,
+    /// Model id. Default `jev-latest`, an alias that moves between releases;
+    /// name a version to pin it.
+    pub model: Option<String>,
+    /// NAME of the environment variable holding the API key, never the key
+    /// itself. Default `TYPESAFE_API_KEY`.
+    pub api_key_env: Option<String>,
+    /// Time allowed for one whole classification, in milliseconds.
+    /// Default 2000.
+    pub timeout_ms: Option<u64>,
 }
 
 /// `[trigger_poller]` section. Controls the background trigger-poller worker.
@@ -2686,6 +2730,42 @@ typo = true
         let err = RebornConfigFile::parse_text(toml, &attributed())
             .expect_err("deny_unknown_fields must catch typos in [memory]");
         assert!(matches!(err, RebornConfigFileError::Toml { .. }));
+    }
+
+    #[test]
+    fn tool_selection_section_parses_and_rejects_unknown_keys() {
+        let cfg = RebornConfigFile::parse_text(
+            r#"
+[tool_selection]
+classifier = "jev"
+max_tools = 12
+
+[tool_selection.jev]
+model = "jev-1.13.0"
+api_key_env = "MY_JEV_KEY"
+"#,
+            &attributed(),
+        )
+        .expect("tool_selection section must parse");
+        let section = cfg.tool_selection.expect("tool_selection section present");
+        assert_eq!(section.classifier.as_deref(), Some("jev"));
+        assert_eq!(section.max_tools, Some(12));
+        assert_eq!(section.token_budget, None);
+        let jev = section.jev.expect("jev section present");
+        assert_eq!(jev.model.as_deref(), Some("jev-1.13.0"));
+        assert_eq!(jev.api_key_env.as_deref(), Some("MY_JEV_KEY"));
+
+        RebornConfigFile::parse_text(
+            "[tool_selection.jev]\napi_key = \"secret\"\n",
+            &attributed(),
+        )
+        .expect_err("an inline key is an unknown field, not a setting");
+        assert!(
+            RebornConfigFile::parse_text("", &attributed())
+                .expect("empty file parses")
+                .tool_selection
+                .is_none()
+        );
     }
 
     #[test]

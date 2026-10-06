@@ -32,8 +32,10 @@ mod native_extensions;
 // (#6015).
 #[cfg(test)]
 pub(crate) mod test_env;
+mod tool_selection;
 mod trigger_poller;
 
+use tool_selection::tool_selection_config;
 use trigger_poller::trigger_poller_settings;
 
 pub(crate) fn init_tracing() {
@@ -561,6 +563,15 @@ pub(crate) fn build_runtime_input_with_options(
         .with_regex_skill_activation_enabled(regex_skill_activation_enabled(
             runtime_services.config_file.as_ref(),
         ));
+    // Turn-start tool selection (`[tool_selection]` / `REBORN_TOOL_SELECTION`),
+    // off by default. The `jev` classifier refuses startup without its key.
+    if let Some(settings) = tool_selection_config(runtime_services.config_file.as_ref())? {
+        runtime_input = runtime_input.with_tool_selection(
+            settings.max_tools,
+            settings.token_budget,
+            std::sync::Arc::new(settings.classifier),
+        )?;
+    }
 
     {
         // The composition runtime cold-boots with a placeholder gateway and
