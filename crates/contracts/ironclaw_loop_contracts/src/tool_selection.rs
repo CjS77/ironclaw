@@ -12,9 +12,9 @@
 //! # Output is untrusted
 //!
 //! A classifier cannot grant authority. The host drops every returned name
-//! that is not a candidate, duplicates and invalid scores, and stops adding
-//! tools once [`ToolSelectionRequest::max_tools`] or
-//! [`ToolSelectionRequest::token_budget`] is reached.
+//! that is not a candidate, duplicates and invalid scores, and leaves out any
+//! tool past [`ToolSelectionRequest::max_tools`] or
+//! [`ToolSelectionRequest::token_budget`].
 //!
 //! # When a classifier runs
 //!

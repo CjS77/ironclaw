@@ -18,12 +18,12 @@ use serde_json::{Map, Value, json};
 /// tool entries) plus its single longest question may carry. The decisions
 /// API's published limit is 32,000 tokens; this keeps a margin below it,
 /// since the estimate is only an estimate.
-pub const DEFAULT_MAX_STATE_AND_QUESTION_TOKENS: usize = 30_000;
+pub(crate) const DEFAULT_MAX_STATE_AND_QUESTION_TOKENS: usize = 30_000;
 
 /// Most estimated tokens one whole request (`state` plus every question) may
 /// carry. The decisions API's published limit is 64,000 tokens; this keeps
 /// a margin below it.
-pub const DEFAULT_MAX_REQUEST_TOKENS: usize = 60_000;
+pub(crate) const DEFAULT_MAX_REQUEST_TOKENS: usize = 60_000;
 
 /// Bytes per estimated token. JSON punctuation and identifiers tokenize
 /// worse than prose, so this errs towards more tokens (smaller slices);
@@ -118,12 +118,16 @@ fn conversation(context: &ConversationContext) -> Vec<&str> {
     let mut remaining = MAX_CONVERSATION_CONTEXT_BYTES;
     let mut kept = Vec::new();
     for message in context.user_messages() {
-        if remaining == 0 {
+        let cut = truncate_to_char_boundary(message, remaining);
+        if !cut.is_empty() {
+            kept.push(cut);
+        }
+        if cut.len() < message.len() {
+            // Nothing after a cut message is sent, so the conversation
+            // never skips one and resumes with a later one.
             break;
         }
-        let message = truncate_to_char_boundary(message, remaining);
-        remaining -= message.len();
-        kept.push(message);
+        remaining -= cut.len();
     }
     kept
 }
@@ -296,6 +300,15 @@ mod tests {
             kept.iter().map(|message| message.len()).sum::<usize>(),
             MAX_CONVERSATION_CONTEXT_BYTES
         );
+
+        // One byte left and a 2-byte character next: nothing more is sent,
+        // rather than an empty message and then the start of a later one.
+        let context = ConversationContext::new(vec![
+            "a".repeat(MAX_CONVERSATION_CONTEXT_BYTES - 1),
+            "é".to_string(),
+            "z".to_string(),
+        ]);
+        assert_eq!(conversation(&context).len(), 1);
     }
 
     /// With full descriptions in `state`, the state-and-longest-question

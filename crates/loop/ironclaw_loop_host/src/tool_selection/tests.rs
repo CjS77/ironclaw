@@ -418,6 +418,26 @@ async fn a_run_without_user_text_records_nothing_and_a_later_turn_selects() {
 }
 
 #[tokio::test]
+async fn a_record_that_cannot_be_read_keeps_the_ordinary_surface_without_selecting() {
+    let conversation = Conversation::new().await;
+    let classifier = ScriptedClassifier::choosing(&["tool_04"]);
+    // The store knows no such thread, so the record read fails.
+    let mut run = conversation.run(Some("do the thing")).await;
+    run.thread_id = ThreadId::new("thread-unknown").expect("thread");
+
+    assert_eq!(
+        conversation.advertised(&classifier, &run).await,
+        ordinary_plus(&[])
+    );
+    assert_eq!(
+        classifier.calls(),
+        0,
+        "no list is chosen that cannot be kept"
+    );
+    assert_eq!(conversation.record().await, None);
+}
+
+#[tokio::test]
 async fn a_selected_tool_that_loses_authorization_is_no_longer_advertised() {
     let conversation = Conversation::new().await;
     let classifier = ScriptedClassifier::choosing(&["tool_07", "tool_02"]);

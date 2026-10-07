@@ -167,6 +167,8 @@ async def run_arm(args: argparse.Namespace, live_qa: Any, arm: str) -> list[dict
     case_dir = args.output_dir / "cases" / arm
     home = live_qa.create_generated_reborn_home(case_dir / "source-home")
     if arm == "jev":
+        # Five times the shipped 2000 ms default, so one slow classification
+        # does not end the arm; the server log has each call's latency_ms.
         jev = [f'api_key_env = "{args.jev_api_key_env}"', "timeout_ms = 10000"]
         if args.jev_endpoint:
             jev.append(f'endpoint = "{args.jev_endpoint}"')
@@ -278,9 +280,11 @@ async def run_arm(args: argparse.Namespace, live_qa: Any, arm: str) -> list[dict
                 )
         return observations
     finally:
-        if proc is not None:
-            live_qa.stop_process(proc)
-        fixture.stop()
+        try:
+            if proc is not None:
+                live_qa.stop_process(proc)
+        finally:
+            fixture.stop()
 
 
 def summarize(observations: list[dict[str, Any]]) -> dict[str, Any]:

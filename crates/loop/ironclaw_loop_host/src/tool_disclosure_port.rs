@@ -939,12 +939,17 @@ impl ToolDisclosureCapabilityPort {
                 metadata_fingerprint = fingerprint,
                 "rebuilt authorized deferred-tool search index"
             );
-            let promoted = self.promoted_for_scope()?;
+            let selected = self
+                .selected_tools
+                .get()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let promoted = self
+                .promoted_for_scope()?
+                .without_selected(&catalog, selected);
             let mut active =
                 select_active_set_for_mode(&catalog, &promoted, self.caps, &self.policy, self.mode);
-            if let Some(selected) = self.selected_tools.get() {
-                append_selected_tools(&mut active, &catalog, selected, &self.policy);
-            }
+            append_selected_tools(&mut active, &catalog, selected, &self.policy);
             // Preserve disclosure progress across a same-turn refresh (a tool the
             // model already described stays disclosed); a genuine turn change
             // starts fresh.

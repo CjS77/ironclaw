@@ -136,7 +136,7 @@ impl JevToolClassifier {
 
     /// How many requests (slices) classifying `request` sends.
     pub fn slice_count(&self, request: &ToolSelectionRequest) -> usize {
-        plan_slices(&request.context, &request.candidates, TokenLimits::DEFAULT).len()
+        planned_slices(request).len()
     }
 
     /// Ask one slice and return its probabilities in slice order.
@@ -243,6 +243,15 @@ fn egress_failure(error: NetworkHttpError) -> ToolSelectionError {
     ))
 }
 
+/// The slices a classification of `request` sends: none when nothing may be
+/// chosen.
+fn planned_slices(request: &ToolSelectionRequest) -> Vec<Vec<usize>> {
+    if request.max_tools == 0 {
+        return Vec::new();
+    }
+    plan_slices(&request.context, &request.candidates, TokenLimits::DEFAULT)
+}
+
 /// The candidates by probability, highest first (ties in catalog order):
 /// at most `max_tools` of them, stopping at the first one that would take
 /// the chosen tools' schema tokens past `token_budget`.
@@ -277,11 +286,7 @@ impl ToolSelectionClassifier for JevToolClassifier {
         request: &ToolSelectionRequest,
     ) -> Result<ToolSelection, ToolSelectionError> {
         let started = Instant::now();
-        let slices = if request.max_tools == 0 {
-            Vec::new() // Nothing may be chosen, so nothing is sent.
-        } else {
-            plan_slices(&request.context, &request.candidates, TokenLimits::DEFAULT)
-        };
+        let slices = planned_slices(request);
         // Every slice concurrently, under one deadline; the first failure
         // cancels the rest, since a partial vector must never be ranked.
         let asked = try_join_all(slices.iter().map(|slice| self.ask_slice(request, slice)));

@@ -30,8 +30,11 @@
 //!
 //! # Confidentiality
 //!
-//! The classifier is handed the turn's accepted user message, cut to
-//! `MAX_CONVERSATION_CONTEXT_BYTES`. Nothing here logs it: selection logs at
+//! The classifier is handed the message the run was accepted with, cut to
+//! `MAX_CONVERSATION_CONTEXT_BYTES`. For an ordinary conversation that is what
+//! the user typed. A subagent runs on a thread of its own, so it selects for
+//! itself, from the task its parent handed it: text the parent's model wrote.
+//! Nothing here logs it: selection logs at
 //! `debug!` on [`TOOL_SELECTION_LOG_TARGET`] carry only counts, tool names
 //! and scores.
 
@@ -48,9 +51,9 @@ use ironclaw_loop_contracts::{
     ToolSelectionCandidate, ToolSelectionClassifier, ToolSelectionError, ToolSelectionRequest,
 };
 use ironclaw_threads::{
-    MAX_TOOL_SELECTION_TOOLS, MessageKind, RecordToolSelectionRequest, SelectedTool,
-    SessionThreadService, TOOL_SELECTION_SCHEMA_VERSION, ThreadScope, ToolSelectionFallbackReason,
-    ToolSelectionRecord,
+    MAX_TOOL_SELECTION_SCORER_BYTES, MAX_TOOL_SELECTION_TOOLS, MessageKind,
+    RecordToolSelectionRequest, SelectedTool, SessionThreadService, TOOL_SELECTION_SCHEMA_VERSION,
+    ThreadScope, ToolSelectionFallbackReason, ToolSelectionRecord,
 };
 use tracing::debug;
 
@@ -65,9 +68,9 @@ pub(crate) const TOOL_SELECTION_LOG_TARGET: &str = "ironclaw::reborn::tool_selec
 /// Why a [`ToolSelectionConfig`] was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ToolSelectionConfigError {
-    #[error("turn-start tool selection must select between 1 and {max} tools, got {value}")]
+    #[error("[tool_selection] max_tools must be between 1 and {max}, got {value}")]
     MaxToolsOutOfRange { value: usize, max: usize },
-    #[error("the turn-start tool selection token budget must be more than 0")]
+    #[error("[tool_selection] token_budget must be more than 0")]
     ZeroTokenBudget,
 }
 
@@ -82,8 +85,8 @@ pub struct ToolSelectionConfig {
 impl ToolSelectionConfig {
     /// `max_tools` is the most tools a conversation may select, and
     /// `token_budget` the most estimated schema tokens they may add up to.
-    /// The operator-facing defaults live with the setting's parser
-    /// (`ironclaw_config`); this type only checks them.
+    /// The operator-facing defaults live where the setting is resolved (the
+    /// binary's runtime setup); this type only checks them.
     pub fn new(
         max_tools: usize,
         token_budget: u32,
@@ -168,16 +171,6 @@ impl TurnStartToolSelection {
         if !catalog.defers(policy, caps) {
             return Vec::new();
         }
-        let candidates: Vec<ToolSelectionCandidate> = catalog
-            .deferred_definitions_with_tokens(policy)
-            .map(|(definition, est_schema_tokens)| ToolSelectionCandidate {
-                definition: definition.clone(),
-                est_schema_tokens,
-            })
-            .collect();
-        if candidates.is_empty() {
-            return Vec::new();
-        }
         let scope = ThreadScopeResolver::resolve_for_turn(
             &self.thread_scope,
             &run_context.scope,
@@ -199,10 +192,20 @@ impl TurnStartToolSelection {
                 return Vec::new();
             }
         }
+        let candidates: Vec<ToolSelectionCandidate> = catalog
+            .deferred_definitions_with_tokens(policy)
+            .map(|(definition, est_schema_tokens)| ToolSelectionCandidate {
+                definition: definition.clone(),
+                est_schema_tokens,
+            })
+            .collect();
+        if candidates.is_empty() {
+            return Vec::new();
+        }
         let Some(context) = self.opening_request(run_context, &scope).await else {
             debug!(
                 target: TOOL_SELECTION_LOG_TARGET,
-                "run has no accepted user message with text; this run keeps the ordinary tool surface"
+                "no accepted user message with text could be used; this run keeps the ordinary tool surface"
             );
             return Vec::new();
         };
@@ -331,8 +334,10 @@ fn selected_ids(record: &ToolSelectionRecord) -> Vec<CapabilityId> {
 }
 
 /// The classifier's answer, checked: only candidates, once each, with a
-/// finite non-negative score, in the classifier's order until `max_tools` or
-/// the token budget is reached. A classifier cannot grant authority.
+/// finite non-negative score, in the classifier's order. A tool past
+/// `max_tools`, or one that would take the total past the token budget, is
+/// left out; a later, smaller one may still fit. A classifier cannot grant
+/// authority.
 fn accept_chosen(request: &ToolSelectionRequest, chosen: Vec<ChosenTool>) -> Vec<SelectedTool> {
     let candidates: BTreeMap<&str, &ToolSelectionCandidate> = request
         .candidates
@@ -379,7 +384,7 @@ fn accept_chosen(request: &ToolSelectionRequest, chosen: Vec<ChosenTool>) -> Vec
 
 /// Whether a classifier's scale identifier can be recorded as-is.
 fn valid_scorer(scorer: &str) -> bool {
-    !scorer.is_empty() && scorer.len() <= 256
+    !scorer.is_empty() && scorer.len() <= MAX_TOOL_SELECTION_SCORER_BYTES
 }
 
 /// How a classifier failure is recorded.

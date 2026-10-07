@@ -554,6 +554,29 @@ impl PromotedSet {
     pub(crate) fn len(&self) -> usize {
         self.names.len()
     }
+
+    /// This set without a conversation's turn-start selection. A selected
+    /// tool is advertised from its record, in its recorded place; were it
+    /// also counted as promoted once the model called it, it would take a
+    /// promotion slot and move ahead of the rest of the selection, changing
+    /// the `tools` array mid-conversation.
+    pub(crate) fn without_selected(
+        &self,
+        catalog: &CapabilityCatalog,
+        selected: &[CapabilityId],
+    ) -> Self {
+        let names = self
+            .names
+            .iter()
+            .filter(|name| {
+                catalog
+                    .definition_by_name(name)
+                    .is_none_or(|definition| !selected.contains(&definition.capability_id))
+            })
+            .cloned()
+            .collect();
+        Self { names }
+    }
 }
 
 impl Default for DisclosureCaps {

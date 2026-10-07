@@ -4,7 +4,7 @@
 //! TYPESAFE_API_KEY=... cargo run -p ironclaw --example jev_select_tools -- \
 //!     "email the Q3 numbers from the budget sheet to finance"
 //! TYPESAFE_API_KEY=... cargo run -p ironclaw --example jev_select_tools -- \
-//!     --catalog crates/app/ironclaw_cli/examples/tools-1000.json --max-tools 8 \
+//!     --catalog path/to/tools.json --max-tools 8 \
 //!     "open a pull request for the fix"
 //! ```
 //!

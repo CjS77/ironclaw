@@ -128,6 +128,47 @@ async fn a_selection_is_recorded_once_and_read_back() {
 }
 
 #[tokio::test]
+async fn concurrent_writers_are_all_handed_the_one_stored_record() {
+    for (backend, service) in backends() {
+        let scope = scope("owner");
+        let thread_id = ensure_thread(service.as_ref(), &scope).await;
+        let write = |names: &'static [&'static str]| {
+            service.record_tool_selection(RecordToolSelectionRequest {
+                scope: scope.clone(),
+                thread_id: thread_id.clone(),
+                record: record(names),
+            })
+        };
+        let (left, right) = tokio::join!(write(&["gmail.send"]), write(&["slack.post"]));
+        let (left, right) = (left.unwrap(), right.unwrap());
+        assert_eq!(left, right, "{backend}: both writers see one record");
+        assert_eq!(
+            service
+                .read_tool_selection(&scope, &thread_id)
+                .await
+                .unwrap(),
+            Some(left),
+            "{backend}"
+        );
+
+        // A thread that was never created has no record to read or write.
+        let missing = ThreadId::new("thread-never-created").unwrap();
+        assert!(
+            service.read_tool_selection(&scope, &missing).await.is_err(),
+            "{backend}"
+        );
+        let refused = service
+            .record_tool_selection(RecordToolSelectionRequest {
+                scope: scope.clone(),
+                thread_id: missing,
+                record: record(&["gmail.send"]),
+            })
+            .await;
+        assert!(refused.is_err(), "{backend}");
+    }
+}
+
+#[tokio::test]
 async fn a_selection_is_scoped_to_its_thread_and_survives_only_its_incarnation() {
     for (backend, service) in backends() {
         let scope = scope("owner");

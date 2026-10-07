@@ -130,6 +130,13 @@ mod tests {
                 .expect("resolves")
                 .is_none()
         );
+        let mut off_in_file = jev_section();
+        off_in_file.classifier = Some("off".to_string());
+        assert!(
+            resolve_tool_selection(Some(&off_in_file), Some("jev".into()), key_set)
+                .expect("resolves")
+                .is_some()
+        );
         let settings = resolve_tool_selection(Some(&jev_section()), None, key_set)
             .expect("resolves")
             .expect("jev is bound");

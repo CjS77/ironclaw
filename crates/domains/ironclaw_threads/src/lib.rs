@@ -79,8 +79,8 @@ pub use tool_result_records::{
     model_result_preview_from_json_page, render_json_tool_result_page,
 };
 pub use tool_selection::{
-    MAX_TOOL_SELECTION_TOOLS, RecordToolSelectionRequest, SelectedTool,
-    TOOL_SELECTION_SCHEMA_VERSION, ToolSelectionFallbackReason, ToolSelectionRecord,
+    MAX_TOOL_SELECTION_SCORER_BYTES, MAX_TOOL_SELECTION_TOOLS, RecordToolSelectionRequest,
+    SelectedTool, TOOL_SELECTION_SCHEMA_VERSION, ToolSelectionFallbackReason, ToolSelectionRecord,
 };
 // The attachment vocabulary lives in `ironclaw_common` (next to `AttachmentKind`
 // and `IncomingAttachment`); re-exposed here so transcript-contract consumers

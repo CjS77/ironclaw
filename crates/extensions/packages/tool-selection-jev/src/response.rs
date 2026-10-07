@@ -14,7 +14,9 @@ struct DecisionsResponse {
 
 #[derive(Deserialize)]
 struct Answer {
-    #[serde(rename = "type")]
+    /// Defaulted so an entry of another shape, under an id that was not
+    /// asked, does not fail the whole response.
+    #[serde(rename = "type", default)]
     kind: String,
     #[serde(default)]
     noul: Option<f64>,
@@ -58,7 +60,9 @@ pub(crate) fn parse_answer(body: &[u8], asked: &[&str]) -> Result<Vec<f32>, Answ
             answer
                 .noul
                 .filter(|value| answer.kind == "noul" && (0.0..=1.0).contains(value))
-                .map(|value| value as f32)
+                // Adding zero turns -0.0 into 0.0, which would otherwise sort
+                // below the other zero scores.
+                .map(|value| (value + 0.0) as f32)
                 .ok_or(AnswerError::InvalidProbability)
         })
         .collect()
@@ -75,11 +79,16 @@ mod tests {
             "answers": {
                 "b": {"type": "noul", "noul": 0.25},
                 "a": {"type": "noul", "noul": 0.75},
-                "unasked": {"type": "noul", "noul": 1.0}
+                "unasked": {"type": "noul", "noul": 1.0},
+                "meta": {}
             },
             "usage": {"input_tokens": 120, "output_tokens": 4}
         }"#;
         assert_eq!(parse_answer(body, &["a", "b"]), Ok(vec![0.75, 0.25]));
+
+        let negative_zero = br#"{"answers": {"a": {"type": "noul", "noul": -0.0}}}"#;
+        let zero = parse_answer(negative_zero, &["a"]).expect("zero is a valid probability");
+        assert!(zero[0].is_sign_positive(), "-0.0 is read as 0.0");
     }
 
     #[test]
@@ -103,6 +112,10 @@ mod tests {
             ),
             (
                 r#"{"answers": {"a": {"type": "score", "noul": 0.5}}}"#,
+                AnswerError::InvalidProbability,
+            ),
+            (
+                r#"{"answers": {"a": {"noul": 0.5}}}"#,
                 AnswerError::InvalidProbability,
             ),
         ] {

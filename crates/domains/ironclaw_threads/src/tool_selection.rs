@@ -28,7 +28,7 @@ pub const TOOL_SELECTION_SCHEMA_VERSION: u32 = 1;
 pub const MAX_TOOL_SELECTION_TOOLS: usize = 128;
 
 /// Longest scorer identifier a record may carry, in bytes.
-const MAX_SCORER_BYTES: usize = 256;
+pub const MAX_TOOL_SELECTION_SCORER_BYTES: usize = 256;
 
 /// One selected tool and the score it was chosen on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,11 +120,9 @@ impl ToolSelectionRecord {
                 )));
             }
         }
-        if self
-            .scorer
-            .as_ref()
-            .is_some_and(|scorer| scorer.is_empty() || scorer.len() > MAX_SCORER_BYTES)
-        {
+        if self.scorer.as_ref().is_some_and(|scorer| {
+            scorer.is_empty() || scorer.len() > MAX_TOOL_SELECTION_SCORER_BYTES
+        }) {
             return Err(invalid("the scorer identifier is empty or too long".into()));
         }
         if self.fallback_reason.is_some() && !self.selected.is_empty() {

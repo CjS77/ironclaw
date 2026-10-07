@@ -71,7 +71,12 @@ Descriptions ride in the questions because `state` is counted against both
 limits. In `state`, full 1 KiB descriptions ended a slice at about 75 tools;
 in the questions a slice holds about 140, so 1,000 such tools take 7 requests
 instead of 18. Against a live endpoint the two layouts chose the same top
-tools, with scores moving by little more than the model's run-to-run noise.
+three tools, with scores moving by little more than the model's run-to-run
+noise; one borderline tool crossed the top-five cut-off.
+
+The estimate was calibrated on English text. Text that tokenizes worse than
+one token per three bytes (some non-Latin scripts) can make a full slice
+exceed the published limit, which the endpoint refuses (`rejected`).
 
 Slices are runs of consecutive tools in catalog order, each carrying the same
 `conversation`, and the split depends only on the request. A tool too large
@@ -100,6 +105,15 @@ partial vector is never ranked. The host decides what a failure means.
 | `429`, `503`, `529` (overload) | `rate_limited` |
 | Any other status | `rejected` |
 | Malformed JSON, a missing answer, a probability outside `[0, 1]`, a body over 1 MiB | `invalid_output` |
+
+The endpoint must answer directly. A redirect is followed without the
+`Authorization` header, so a URL the provider redirects usually ends as
+`unauthorized`.
+
+Tool descriptions are part of the question text, and there is no probability
+threshold, so a description written to flatter itself can raise its own
+tool's rank. The effect is bounded: only tools the caller is already
+authorized for are candidates, and the host checks every chosen name.
 
 ## Confidentiality
 

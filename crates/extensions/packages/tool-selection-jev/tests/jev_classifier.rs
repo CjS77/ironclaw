@@ -186,9 +186,8 @@ async fn every_failure_is_a_labelled_error_and_one_bad_slice_fails_the_whole_sel
     .await;
     let outcome = classify(&stub.url, 5_000, request("go", tools, 5)).await;
     assert_eq!(outcome, Err("rate_limited"));
-    // The slices are sent concurrently and the first failure ends the
-    // classification, so the other slice may not have been received yet.
-    assert!((1..=2).contains(&stub.requests().len()));
+    // The stub answers nothing until both slices have arrived.
+    assert_eq!(stub.requests().len(), 2, "never retried");
 }
 
 #[tokio::test]

@@ -32,4 +32,3 @@ pub use classifier::{
     DEFAULT_JEV_MODEL, JEV_CLASSIFIER_NAME, JevApiKey, JevConfigError, JevToolClassifier,
 };
 pub use endpoint::{DEFAULT_JEV_ENDPOINT, JevEndpoint};
-pub use request::{DEFAULT_MAX_REQUEST_TOKENS, DEFAULT_MAX_STATE_AND_QUESTION_TOKENS};
