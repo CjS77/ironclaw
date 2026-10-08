@@ -68,7 +68,8 @@ def scrub_environment(args: argparse.Namespace) -> dict[str, str]:
     # The generated server home is configured from the live-QA variables and
     # defaults to the NEAR AI provider. Fill them from the binary's own LLM_*
     # settings when those are what the caller has, then drop the LLM_* ones so
-    # the model is configured in exactly one place.
+    # the model is configured in exactly one place. A variable named by
+    # --llm-api-key-env or --jev-api-key-env stays: the config refers to it.
     for target, source in (
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_PROVIDER_ID", "LLM_BACKEND"),
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_MODEL", "LLM_MODEL"),
@@ -78,7 +79,8 @@ def scrub_environment(args: argparse.Namespace) -> dict[str, str]:
             env[target] = env[source]
     if env.get("LLM_API_KEY") and not env.get("NEARAI_API_KEY"):
         env.setdefault("LIVE_OPENAI_COMPATIBLE_API_KEY", env["LLM_API_KEY"])
-    for name in [name for name in env if name.startswith("LLM_")]:
+    selected = {args.llm_api_key_env, args.jev_api_key_env}
+    for name in [name for name in env if name.startswith("LLM_") and name not in selected]:
         del env[name]
     for target, value in (
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_PROVIDER_ID", args.llm_provider),

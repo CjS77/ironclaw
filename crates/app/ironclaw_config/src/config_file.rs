@@ -1103,6 +1103,13 @@ impl RebornConfigFile {
                 }
             }
         }
+        if let Some(classifier) = self
+            .tool_selection
+            .as_ref()
+            .and_then(|section| section.classifier.as_ref())
+        {
+            check(Cow::Borrowed("tool_selection.classifier"), classifier)?;
+        }
         if let Some(jev) = self
             .tool_selection
             .as_ref()
@@ -2797,6 +2804,21 @@ api_key_env = "MY_JEV_KEY"
             RebornConfigFile::parse_text(&format!("[tool_selection.jev]\n{jev}\n"), &attributed())
                 .expect_err("must be rejected")
         };
+        let secret_classifier = RebornConfigFile::parse_text(
+            "[tool_selection]\nclassifier = \"sk-proj-1234567890abcdef1234567890\"\n",
+            &attributed(),
+        )
+        .expect_err("a secret-shaped classifier must be rejected");
+        assert!(
+            matches!(
+                secret_classifier,
+                RebornConfigFileError::InlineSecret { .. }
+            ),
+            "{secret_classifier}"
+        );
+        let rendered = secret_classifier.to_string();
+        assert!(rendered.contains("tool_selection.classifier"), "{rendered}");
+        assert!(!rendered.contains("sk-proj-"), "{rendered}");
         // A pasted key where the variable NAME belongs, and in the two free
         // text fields.
         for field in ["api_key_env", "endpoint", "model"] {
