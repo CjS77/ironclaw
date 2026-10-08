@@ -11,8 +11,8 @@ usage, model calls, and `tool_search` / `tool_describe` calls.
 
 Needs a live model key in the environment (LLM_API_KEY with LLM_BACKEND /
 LLM_BASE_URL / LLM_MODEL, or NEARAI_API_KEY, or LIVE_OPENAI_COMPATIBLE_API_KEY)
-and TYPESAFE_API_KEY for the Jev arm. Every other variable is dropped before
-the server starts, so both arms differ only in REBORN_TOOL_SELECTION.
+and TYPESAFE_API_KEY for the Jev arm. The server is started with a filtered
+copy of the environment, so both arms differ only in REBORN_TOOL_SELECTION.
 
     python3 scripts/tool_discovery_benchmark/selection_smoke.py \
         --output-dir /tmp/ironclaw-selection-smoke
@@ -28,6 +28,7 @@ import re
 import statistics
 import sys
 import time
+import unittest.mock
 import urllib.error
 import uuid
 from pathlib import Path
@@ -45,18 +46,25 @@ DEFAULT_TASKS = (
 )
 # Only these reach the server; anything else in the caller's environment
 # (other tool-selection or disclosure settings, say) would skew an arm.
-PASSED_EXACT = {"PATH", "LANG", "LC_ALL", "TMPDIR", "TYPESAFE_API_KEY", "NEARAI_API_KEY"}
+PASSED_EXACT = {
+    "PATH", "LANG", "LC_ALL", "TMPDIR", "TYPESAFE_API_KEY", "NEARAI_API_KEY",
+    "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
+}
 PASSED_PREFIXES = ("LLM_", "LIVE_OPENAI_COMPATIBLE_", "REBORN_WEBUI_V2_LIVE_QA_", "OPENAI_")
 LLM_KEY_VARS = ("NEARAI_API_KEY", "LIVE_OPENAI_COMPATIBLE_API_KEY")
 SELECTION_LOG = "ironclaw::reborn::tool_selection=debug"
 
 
-def scrub_environment(args: argparse.Namespace) -> None:
+def scrub_environment(args: argparse.Namespace) -> dict[str, str]:
+    """The environment the server runs in: a filtered copy of the caller's.
+    `os.environ` itself is left alone, so the harness keeps the operator's."""
     keep = PASSED_EXACT | {args.jev_api_key_env, args.llm_api_key_env or ""}
-    for name in list(os.environ):
-        if name not in keep and not name.startswith(PASSED_PREFIXES):
-            del os.environ[name]
-    os.environ["RUST_LOG"] = f"ironclaw=warn,ironclaw_webui=info,{SELECTION_LOG}"
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name in keep or name.startswith(PASSED_PREFIXES) or name.upper().endswith("_PROXY")
+    }
+    env["RUST_LOG"] = f"ironclaw=warn,ironclaw_webui=info,{SELECTION_LOG}"
     # The generated server home is configured from the live-QA variables and
     # defaults to the NEAR AI provider. Fill them from the binary's own LLM_*
     # settings when those are what the caller has, then drop the LLM_* ones so
@@ -66,19 +74,20 @@ def scrub_environment(args: argparse.Namespace) -> None:
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_MODEL", "LLM_MODEL"),
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_BASE_URL", "LLM_BASE_URL"),
     ):
-        if os.environ.get(source) and not os.environ.get(target):
-            os.environ[target] = os.environ[source]
-    if os.environ.get("LLM_API_KEY") and not os.environ.get("NEARAI_API_KEY"):
-        os.environ.setdefault("LIVE_OPENAI_COMPATIBLE_API_KEY", os.environ["LLM_API_KEY"])
-    for name in [name for name in os.environ if name.startswith("LLM_")]:
-        del os.environ[name]
+        if env.get(source) and not env.get(target):
+            env[target] = env[source]
+    if env.get("LLM_API_KEY") and not env.get("NEARAI_API_KEY"):
+        env.setdefault("LIVE_OPENAI_COMPATIBLE_API_KEY", env["LLM_API_KEY"])
+    for name in [name for name in env if name.startswith("LLM_")]:
+        del env[name]
     for target, value in (
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_PROVIDER_ID", args.llm_provider),
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_MODEL", args.llm_model),
         ("REBORN_WEBUI_V2_LIVE_QA_LLM_API_KEY_ENV", args.llm_api_key_env),
     ):
         if value:
-            os.environ[target] = value
+            env[target] = value
+    return env
 
 
 # The benchmark fixture answers most calls with "benchmark tool <name>
@@ -163,9 +172,14 @@ def selection_log_entries(stderr_path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-async def run_arm(args: argparse.Namespace, live_qa: Any, arm: str) -> list[dict[str, Any]]:
+async def run_arm(
+    args: argparse.Namespace, live_qa: Any, arm: str, env: dict[str, str]
+) -> list[dict[str, Any]]:
     case_dir = args.output_dir / "cases" / arm
-    home = live_qa.create_generated_reborn_home(case_dir / "source-home")
+    # The home generator reads the model settings from the process
+    # environment; show it the server's for the length of the call.
+    with unittest.mock.patch.dict(os.environ, env, clear=True):
+        home = live_qa.create_generated_reborn_home(case_dir / "source-home")
     if arm == "jev":
         # Five times the shipped 2000 ms default, so one slow classification
         # does not end the arm; the server log has each call's latency_ms.
@@ -194,7 +208,9 @@ async def run_arm(args: argparse.Namespace, live_qa: Any, arm: str) -> list[dict
     observations = []
     try:
         live_qa.wait_for_ready = rb.wait_for_ready
-        proc, base_url = await live_qa.start_reborn_server(args.binary, home, case_dir, extra_env)
+        proc, base_url = await live_qa.start_reborn_server(
+            args.binary, home, case_dir, extra_env, base_env=env
+        )
         rb.install_catalog(base_url, catalogs)
         channel = rb._get_json(base_url, "/api/webchat/v2/session")["session_channel_extension_id"]
 
@@ -371,10 +387,10 @@ def parse_args() -> argparse.Namespace:
 
 
 async def async_main(args: argparse.Namespace) -> int:
-    scrub_environment(args)
-    if not any(os.environ.get(name) for name in (*LLM_KEY_VARS, args.llm_api_key_env or "")):
+    env = scrub_environment(args)
+    if not any(env.get(name) for name in (*LLM_KEY_VARS, args.llm_api_key_env or "")):
         raise SystemExit(f"a live model key is required: LLM_API_KEY or one of {', '.join(LLM_KEY_VARS)}")
-    if "jev" in args.arm and not os.environ.get(args.jev_api_key_env):
+    if "jev" in args.arm and not env.get(args.jev_api_key_env):
         raise SystemExit(f"{args.jev_api_key_env} is required for the jev arm")
     if not args.binary.exists():
         raise SystemExit(f"binary not found: {args.binary} (run `cargo build -p ironclaw`)")
@@ -382,7 +398,7 @@ async def async_main(args: argparse.Namespace) -> int:
     live_qa = rb._load_live_qa()
     observations: list[dict[str, Any]] = []
     for arm in args.arm:
-        observations.extend(await run_arm(args, live_qa, arm))
+        observations.extend(await run_arm(args, live_qa, arm, env))
     summary = summarize(observations)
     (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print_table(summary)

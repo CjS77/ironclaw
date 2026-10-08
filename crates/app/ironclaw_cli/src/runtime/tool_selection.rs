@@ -61,6 +61,8 @@ fn resolve_tool_selection(
     let api_key_env = jev
         .and_then(|jev| jev.api_key_env.as_deref())
         .unwrap_or(DEFAULT_JEV_API_KEY_ENV);
+    // Safe to name in the error below: the config layer only admits a plain
+    // variable name here, never a secret-shaped or free-form string.
     let Some(api_key) = env(api_key_env)? else {
         anyhow::bail!(
             "the jev tool selection classifier needs its API key in {api_key_env}, which is unset"

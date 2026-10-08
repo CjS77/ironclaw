@@ -489,7 +489,6 @@ impl RebornIntegrationHarnessBuilder {
         self
     }
 
-    /// Select an exact disclosure comparison arm without mutating process env.
     /// Bind turn-start tool selection into the planned runtime config, the
     /// field production's composition root sets from the operator's
     /// `[tool_selection]` settings. Needs a deferring disclosure mode.
@@ -498,6 +497,7 @@ impl RebornIntegrationHarnessBuilder {
         self
     }
 
+    /// Select an exact disclosure comparison arm without mutating process env.
     pub fn with_tool_disclosure_mode(mut self, mode: ToolDisclosureMode) -> Self {
         self.tool_disclosure = mode;
         self

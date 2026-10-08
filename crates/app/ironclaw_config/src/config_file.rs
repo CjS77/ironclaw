@@ -552,7 +552,7 @@ impl BudgetSection {
 ///
 /// All fields are optional. Ranges and the classifier name are enforced at
 /// boot by the CLI settings layer, where `REBORN_TOOL_SELECTION` overrides
-/// `classifier`.
+/// `classifier`; the `jev` strings are checked for inline secrets here.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolSelectionSection {
@@ -1101,6 +1101,29 @@ impl RebornConfigFile {
                 if let Some(model) = &selection.model {
                     check(llm_slot_field_label(slot, "model"), model)?;
                 }
+            }
+        }
+        if let Some(jev) = self
+            .tool_selection
+            .as_ref()
+            .and_then(|section| section.jev.as_ref())
+        {
+            if let Some(endpoint) = &jev.endpoint {
+                check(Cow::Borrowed("tool_selection.jev.endpoint"), endpoint)?;
+            }
+            if let Some(model) = &jev.model {
+                check(Cow::Borrowed("tool_selection.jev.model"), model)?;
+            }
+            if let Some(api_key_env) = &jev.api_key_env {
+                check_non_empty_trimmed(
+                    Cow::Borrowed("tool_selection.jev.api_key_env"),
+                    api_key_env,
+                )?;
+                validate_env_var_reference(
+                    "tool_selection.jev.api_key_env",
+                    api_key_env,
+                    attributed_path,
+                )?;
             }
         }
         if let Some(storage) = &self.storage {
@@ -2766,6 +2789,42 @@ api_key_env = "MY_JEV_KEY"
                 .tool_selection
                 .is_none()
         );
+    }
+
+    #[test]
+    fn tool_selection_jev_rejects_inline_secrets_and_bad_key_names() {
+        let rejected = |jev: &str| {
+            RebornConfigFile::parse_text(&format!("[tool_selection.jev]\n{jev}\n"), &attributed())
+                .expect_err("must be rejected")
+        };
+        // A pasted key where the variable NAME belongs, and in the two free
+        // text fields.
+        for field in ["api_key_env", "endpoint", "model"] {
+            let secret = "sk-proj-1234567890abcdef1234567890";
+            let err = rejected(&format!("{field} = \"{secret}\""));
+            assert!(
+                matches!(err, RebornConfigFileError::InlineSecret { .. }),
+                "{field}: {err}"
+            );
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(&format!("tool_selection.jev.{field}")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
+        // Not secret-shaped, but not a variable name either.
+        for value in ["", " MY_JEV_KEY", "my-jev-key", "https://jev.example/key"] {
+            let err = rejected(&format!("api_key_env = \"{value}\""));
+            assert!(
+                matches!(
+                    &err,
+                    RebornConfigFileError::InvalidField { field, .. }
+                        if field == "tool_selection.jev.api_key_env"
+                ),
+                "{value:?}: {err}"
+            );
+        }
     }
 
     #[test]
