@@ -625,6 +625,72 @@ fn rejects_multiple_linear_memories_that_exceed_aggregate_memory_budget() {
     );
 }
 
+// The next two tests pin the lane's two independent CPU stops against a guest
+// that never yields. Each one disables the *other* stop, so a Wasmtime upgrade
+// that quietly stops charging fuel, or stops honouring the epoch deadline,
+// fails here rather than letting an untrusted component spin forever.
+// safety: `runtime.execute` below runs a WASM guest, not a database statement,
+// so the pre-commit multi-DB-operation transaction heuristic does not apply.
+
+#[test]
+fn fuel_budget_stops_a_guest_that_never_yields() {
+    let runtime = WitToolRuntime::new(WitToolRuntimeConfig {
+        default_limits: ironclaw_wasm::wasm_sandbox_core::SandboxLimits::default()
+            .with_fuel(1_000_000)
+            // Far longer than the test may take: only fuel can end this call.
+            .with_timeout(std::time::Duration::from_secs(120)),
+    })
+    .unwrap();
+    let prepared = runtime
+        .prepare("spin", &tool_component(&spin_forever_wat()))
+        .unwrap();
+    let started = std::time::Instant::now();
+
+    let host = WitToolHost::deny_all();
+    let error = runtime
+        .execute(&prepared, host, WitToolRequest::new("{}"))
+        .unwrap_err();
+
+    match error {
+        WasmError::ExecutionFailed { message, .. } => assert!(
+            !message.contains("deadline"),
+            "fuel, not the epoch deadline, must stop this guest: {message}"
+        ),
+        other => panic!("expected fuel exhaustion to fail execution, got {other:?}"),
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "fuel exhaustion should end the call long before the wall-clock timeout"
+    );
+}
+
+#[test]
+fn epoch_deadline_stops_a_guest_that_never_yields() {
+    let runtime = WitToolRuntime::new(WitToolRuntimeConfig {
+        default_limits: ironclaw_wasm::wasm_sandbox_core::SandboxLimits::default()
+            // Effectively unlimited fuel: only the epoch deadline can end this call.
+            .with_fuel(u64::MAX)
+            .with_timeout(std::time::Duration::from_millis(300)),
+    })
+    .unwrap();
+    let prepared = runtime
+        .prepare("spin", &tool_component(&spin_forever_wat()))
+        .unwrap();
+
+    let host = WitToolHost::deny_all();
+    let error = runtime
+        .execute(&prepared, host, WitToolRequest::new("{}"))
+        .unwrap_err();
+
+    match error {
+        WasmError::ExecutionFailed { message, .. } => assert!(
+            message.contains("deadline"),
+            "the epoch deadline must stop this guest: {message}"
+        ),
+        other => panic!("expected the epoch deadline to fail execution, got {other:?}"),
+    }
+}
+
 #[test]
 fn http_import_caps_guest_timeout_to_remaining_execution_deadline() {
     use std::sync::Mutex;
@@ -791,6 +857,17 @@ fn execution_fails_when_host_import_returns_after_deadline() {
         error.to_string().contains("deadline"),
         "unexpected error: {error}"
     );
+}
+
+/// The counter tool with an unconditional infinite loop at the top of
+/// `execute`. `schema`/`description` are untouched, so `prepare` still succeeds.
+fn spin_forever_wat() -> String {
+    let spinning = COUNTER_TOOL_WAT.replace(
+        "(func $execute (param i32 i32 i32 i32 i32) (result i32)\n",
+        "(func $execute (param i32 i32 i32 i32 i32) (result i32)\n    (loop $spin (br $spin))\n",
+    );
+    assert_ne!(spinning, COUNTER_TOOL_WAT, "spin loop was not inserted");
+    spinning
 }
 
 fn trap_after_http_wat() -> String {
