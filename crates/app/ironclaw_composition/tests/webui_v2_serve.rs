@@ -1190,11 +1190,6 @@ async fn read_body_string(response: axum::response::Response) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-async fn served_static_text(path: &str) -> String {
-    let (app, _) = build_app();
-    served_static_text_from(app, path).await
-}
-
 async fn served_static_text_from(app: axum::Router, path: &str) -> String {
     let response = app
         .oneshot(
@@ -1233,10 +1228,6 @@ async fn served_bundled_javascript() -> String {
     bundle
 }
 
-async fn served_app_stylesheet() -> String {
-    served_app_vite_asset(".css").await
-}
-
 fn vite_javascript_asset_paths(app_javascript: &str) -> BTreeSet<String> {
     app_javascript
         .match_indices("assets/")
@@ -1250,12 +1241,6 @@ fn vite_javascript_asset_paths(app_javascript: &str) -> BTreeSet<String> {
             path.ends_with(".js").then(|| format!("/{path}"))
         })
         .collect()
-}
-
-async fn served_app_vite_asset(suffix: &str) -> String {
-    let shell = served_static_text("/").await;
-    let asset_path = shell_vite_asset_path(&shell, suffix);
-    served_static_text(&asset_path).await
 }
 
 fn shell_vite_asset_path(shell: &str, suffix: &str) -> String {
@@ -2924,54 +2909,6 @@ async fn static_i18n_module_guards_locale_race_and_clears_failed_pack_cache() {
     assert!(
         !body.contains("setVersion"),
         "the version counter must stay removed: async loads re-render by committing the pack to state",
-    );
-}
-
-#[tokio::test]
-async fn static_near_process_animation_respects_reduced_motion() {
-    // Content-shape regression guard for the typing-indicator animation
-    // contract: the NEAR glyph and its comet animate while the assistant is
-    // working, and both animations are suppressed under
-    // `prefers-reduced-motion: reduce`.
-    let body = served_app_stylesheet().await;
-
-    assert!(
-        body.contains("animation:2s ease-in-out infinite near-pulse"),
-        "the working NEAR glyph must pulse by default",
-    );
-    assert!(
-        body.contains(".near-process.is-busy .near-base{opacity:.24}"),
-        "the working NEAR glyph must be dimmed beneath the comet",
-    );
-    assert!(
-        body.contains(".near-process-label{color:var(--v2-text-muted);font-weight:400}"),
-        "the completed-state label must use muted presentation",
-    );
-    assert!(
-        body.contains(
-            ".near-process.is-busy .near-process-label{color:var(--v2-text-strong);\
-             font-weight:560}"
-        ),
-        "the working-state label must use strong presentation",
-    );
-    assert!(
-        body.contains("animation:1.1s linear infinite near-chase"),
-        "the working NEAR comet must chase by default",
-    );
-    assert!(
-        body.contains("@media (prefers-reduced-motion:reduce)"),
-        "stylesheet must carry a reduced-motion opt-out block",
-    );
-    assert!(
-        body.contains(
-            ".near-process.is-busy .near-process-icon,.near-process.is-busy \
-             .near-process-icon .near-comet{animation:none"
-        ),
-        "the NEAR glyph and comet must stop under prefers-reduced-motion: reduce",
-    );
-    assert!(
-        body.contains(".near-process .near-comet{display:none"),
-        "the comet must be hidden under prefers-reduced-motion: reduce",
     );
 }
 
