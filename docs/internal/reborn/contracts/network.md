@@ -89,7 +89,7 @@ V1 semantics intentionally mirror the current WASM network import policy checks 
 Some deployments need one named endpoint on the local network, such as a sidecar container. `NetworkPolicy.private_network_targets` lists the targets that may do that. The rules are:
 
 - The exemption only lifts the private-address denial. A target must still match `allowed_targets`; an exempt target that is not allowed is denied as `TargetDenied`.
-- A target is exempt when it matches an entry with the same rules as `allowed_targets` (scheme and port must match when the entry sets them). Entries whose host pattern contains `*` are ignored, so a wildcard can never hand private-network reach to every allowed host.
+- A target is exempt when it matches an entry with the same rules as `allowed_targets` (scheme and port must match when the entry sets them). An entry whose host pattern contains `*` is an error: authorization refuses the whole policy with `NetworkPolicyError::WildcardPrivateNetworkTarget`, whatever the target, so a wildcard can never hand private-network reach to every allowed host and a misconfigured policy fails loudly instead of quietly doing less.
 - An exempt target may be, or resolve to, a private-network address: RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), loopback (`127/8`, `::1`), IPv6 unique-local (`fc00::/7`) or carrier-grade NAT (`100.64/10`). IPv4-mapped IPv6 addresses are judged by the IPv4 address they map to.
 - The always-blocked class stays denied even for an exempt target: link-local (`169.254/16`, which includes the `169.254.169.254` cloud metadata endpoint, and `fe80::/10`), multicast (`224/4`, `ff00::/8`), unspecified and "this network" (`0/8`, `::`), the limited broadcast address `255.255.255.255`, and the documentation ranges (`192.0.2/24`, `198.51.100/24`, `203.0.113/24`, `2001:db8::/32`).
 - The same check runs on an IP-literal target in the static enforcer, on every address a hostname resolves to, and on every redirect hop. One blocked address in a resolved set denies the whole request. A redirect is judged by its own target, so an exempt host cannot redirect to a private address that is not itself exempt.
@@ -172,7 +172,7 @@ The crate tests cover:
 - estimated egress limit denial
 - missing egress estimate denial when a limit is configured
 - literal non-public IP denial
-- private-network exemption: exempt literals and exempt hostnames may reach RFC 1918, loopback, unique-local and carrier-grade NAT addresses; always-blocked addresses stay denied for exempt targets; non-exempt targets (including mixed public and private answers) stay denied; wildcard exemptions are ignored; the exemption needs a matching allow entry and matching scheme/port; redirects from an exempt host to a non-exempt private target are denied
+- private-network exemption: exempt literals and exempt hostnames may reach RFC 1918, loopback, unique-local and carrier-grade NAT addresses; always-blocked addresses stay denied for exempt targets; non-exempt targets (including mixed public and private answers) stay denied; a policy carrying a wildcard exemption is refused with a typed error; the exemption needs a matching allow entry and matching scheme/port; redirects from an exempt host to a non-exempt private target are denied
 - IPv4-mapped IPv6 private address denial
 - hostname resolution to non-public IP denial before transport
 - method + URL + header byte counting for `max_egress_bytes`
