@@ -93,6 +93,8 @@ RUN cargo chef cook \
 FROM deps AS builder
 
 COPY Cargo.toml Cargo.lock ./
+# Compiled in by `include_str!` (the fork's version, read by ironclaw_network).
+COPY .naomi-version .naomi-version
 COPY crates/ crates/
 COPY tools/ironclaw_stress/ tools/ironclaw_stress/
 COPY migrations/ migrations/

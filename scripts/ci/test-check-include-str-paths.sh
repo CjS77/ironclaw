@@ -159,6 +159,34 @@ mk "$T12" "Dockerfile" 'FROM rust AS builder\nCOPY src/ src/\nRUN cargo build --
 printf 'x\n' > "$TMP/outside_ext.md"
 assert_blocks "include_str! target outside the repo is flagged" "$T12" "outside the build context"
 
+# ── Case 13: repo-root dotfile read by a crate must be COPYd ───────────────
+# `ironclaw_network` embeds the fork's `.naomi-version` with include_str!; the
+# builder stage copied crates/ but not that root file, so the image build broke.
+T13="$TMP/case13"
+mk "$T13" "crates/net/src/transport.rs" 'const V: &str = include_str!("../../../.naomi-version");\n'
+mk "$T13" ".naomi-version" "0.4\n"
+mk "$T13" "Dockerfile" 'FROM rust AS builder\nCOPY crates/ crates/\nRUN cargo build --bin ironclaw\n'
+assert_blocks "root .naomi-version read by a crate but never COPYd" "$T13" "never COPYs \`.naomi-version\`"
+
+# ── Case 14: same tree with the root file COPYd ────────────────────────────
+T14="$TMP/case14"
+mk "$T14" "crates/net/src/transport.rs" 'const V: &str = include_str!("../../../.naomi-version");\n'
+mk "$T14" ".naomi-version" "0.4\n"
+mk "$T14" "Dockerfile" 'FROM rust AS builder\nCOPY .naomi-version .naomi-version\nCOPY crates/ crates/\nRUN cargo build --bin ironclaw\n'
+assert_allows "root .naomi-version COPYd — build context complete" "$T14"
+
+# ── Case 15: this repository's own Dockerfiles cover every target ──────────
+# Runs the real checker on the real tree, so a Dockerfile that drops a needed
+# COPY (as the builder stage once did for `.naomi-version`) fails here.
+if run_check "$ROOT_DIR" | grep -q "Docker-COPY coverage: OK"; then
+    echo "OK: the repository's Dockerfiles cover every include_str! target"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: the repository's Dockerfiles miss an include_str! target"
+    run_check "$ROOT_DIR" | sed 's/^/    /'
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "Passed: $PASS, Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
