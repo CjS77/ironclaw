@@ -373,7 +373,10 @@ async fn http_egress_exempt_ip_literal_is_checked_on_the_dns_path_too() {
 #[tokio::test]
 async fn http_egress_redirect_from_exempt_host_to_other_private_target_is_denied() {
     // Each hop is re-authorized against its own target: the exemption for the
-    // first host does not carry over to wherever its `Location` points.
+    // first host does not carry over to wherever its `Location` points. The
+    // second hop is a name, not an IP literal, and it resolves to the very
+    // address the exempt host did, so only the hop's own (non-exempt) hostname
+    // can be what denies it.
     let mut allow_any = exempt_host_policy();
     allow_any.allowed_targets.push(NetworkTargetPattern {
         scheme: None,
@@ -381,7 +384,7 @@ async fn http_egress_redirect_from_exempt_host_to_other_private_target_is_denied
         port: None,
     });
     let transport = ScriptedTransport::new(vec![
-        redirect_response("http://10.0.0.99/admin"),
+        redirect_response("http://other.internal/admin"),
         ok_response("should not be fetched"),
     ]);
     let requests = transport.requests.clone();
