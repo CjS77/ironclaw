@@ -94,6 +94,7 @@ Some deployments need one named endpoint on the local network, such as a sidecar
 - The always-blocked class stays denied even for an exempt target: link-local (`169.254/16`, which includes the `169.254.169.254` cloud metadata endpoint, and `fe80::/10`), multicast (`224/4`, `ff00::/8`), unspecified and "this network" (`0/8`, `::`), the limited broadcast address `255.255.255.255`, and the documentation ranges (`192.0.2/24`, `198.51.100/24`, `203.0.113/24`, `2001:db8::/32`).
 - The same check runs on an IP-literal target in the static enforcer, on every address a hostname resolves to, and on every redirect hop. One blocked address in a resolved set denies the whole request. A redirect is judged by its own target, so an exempt host cannot redirect to a private address that is not itself exempt.
 - With `deny_private_ip_ranges` off, the field has no effect. Targets that are not exempt are treated exactly as before.
+- An exemption by host name trusts whatever that name resolves to: whoever controls its DNS answer chooses which private address is reached (the always-blocked class still applies). Exempt a name only when the deployment controls its resolution, or exempt an IP literal.
 
 No production policy sets this field yet. The sandbox managed-egress proxy cannot honour an exemption and rejects a policy that carries one.
 

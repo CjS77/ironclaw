@@ -330,7 +330,7 @@ fn is_private_network_exempt(policy: &NetworkPolicy, target: &NetworkTarget) -> 
 /// Every address here is also in [`is_private_or_loopback_ip`], so the class
 /// only narrows what an exemption allows; it never changes a policy without
 /// one.
-pub(crate) fn is_always_blocked_ip(ip: IpAddr) -> bool {
+fn is_always_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             ip.is_link_local()
