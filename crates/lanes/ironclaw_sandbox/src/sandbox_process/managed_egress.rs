@@ -32,6 +32,7 @@ use secrecy::ExposeSecret;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
+mod target_shape;
 pub(super) const PROXY_LABEL_PREFIX: &str = "ironclaw.proxy";
 pub(super) const NETWORK_LABEL_PREFIX: &str = "ironclaw.network";
 pub(super) const DEFAULT_PROXY_IMAGE: &str =
@@ -105,7 +106,7 @@ impl ManagedEgressConfig {
                 "sandbox managed egress policy must deny private IP ranges".to_string(),
             ));
         }
-        reject_wildcard_targets(&policy)?;
+        target_shape::reject_unrepresentable_targets(&policy)?;
         let proxy_image = configured_proxy_image()?;
         let ca = Arc::new(SandboxCertificateAuthority::generate()?);
         Ok(Self {
@@ -1416,26 +1417,6 @@ async fn remove_network_if_present(docker: &Docker, name: &str) -> Result<(), Ru
     }
 }
 
-/// Rejects wildcard host patterns: iron-proxy globs match the apex and
-/// subdomains at any depth, which is strictly wider than
-/// [`ironclaw_network::target_matches_pattern`]'s exactly-one-label wildcard.
-/// A pattern that cannot be represented exactly fails closed.
-fn reject_wildcard_targets(policy: &NetworkPolicy) -> Result<(), RuntimeProcessError> {
-    if policy
-        .allowed_targets
-        .iter()
-        .any(|target| target.host_pattern.starts_with('*'))
-    {
-        return Err(RuntimeProcessError::ExecutionFailed(
-            "sandbox managed egress proxy cannot represent wildcard host patterns exactly \
-             (proxy globs also match the apex and deeper subdomains); enumerate exact \
-             hostnames instead"
-                .to_string(),
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn proxy_posture(
     proxy_image: &str,
     policy: &NetworkPolicy,
@@ -1623,12 +1604,7 @@ fn render_proxy_config_inner(
                 .to_string(),
         ));
     }
-    if !policy.private_network_targets.is_empty() {
-        return Err(RuntimeProcessError::ExecutionFailed(
-            "sandbox managed egress proxy cannot honour private-network exemptions".to_string(),
-        ));
-    }
-    reject_wildcard_targets(policy)?;
+    target_shape::reject_unrepresentable_targets(policy)?;
 
     let mut headers = [
         "Authorization",
@@ -2353,10 +2329,6 @@ mod tests {
         let mut byte_limited = policy();
         byte_limited.max_egress_bytes = Some(1024);
         assert!(render_proxy_config(&byte_limited, "172.28.10.2").is_err());
-
-        let mut private_exempt = policy();
-        private_exempt.private_network_targets = vec![private_exempt.allowed_targets[0].clone()];
-        assert!(render_proxy_config(&private_exempt, "172.28.10.2").is_err());
 
         open.deny_private_ip_ranges = true;
         open.allowed_targets.clear();

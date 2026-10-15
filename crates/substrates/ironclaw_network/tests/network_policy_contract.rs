@@ -450,20 +450,31 @@ async fn private_exemption_is_not_an_allow_grant() {
 }
 
 #[tokio::test]
-async fn private_exemption_ignores_wildcard_entries() {
+async fn private_exemption_with_a_wildcard_entry_is_refused_outright() {
     // A wildcard exemption would turn the narrow opt-in back into "every host
-    // may reach the private network". It is ignored rather than honoured.
+    // may reach the private network". The whole policy is refused with a
+    // typed error — even for a public target, and even when another entry
+    // is a valid literal — so a misconfiguration fails loudly instead of
+    // quietly doing less than its author meant.
     for wildcard in ["*", "*.internal"] {
-        let policy = NetworkPolicy {
-            allowed_targets: vec![pattern(None, "*", None)],
-            deny_private_ip_ranges: true,
-            max_egress_bytes: Some(1024),
-            private_network_targets: vec![pattern(None, wildcard, None)],
-        };
-        let error = authorize_literal(policy, NetworkScheme::Http, "10.0.0.7", None)
-            .await
-            .expect_err("a wildcard exemption must not exempt anything");
-        assert!(error.is_private_target_denied(), "{wildcard}: {error:?}");
+        for host in ["10.0.0.7", "93.184.216.34"] {
+            let policy = NetworkPolicy {
+                allowed_targets: vec![pattern(None, "*", None)],
+                deny_private_ip_ranges: true,
+                max_egress_bytes: Some(1024),
+                private_network_targets: vec![
+                    pattern(None, "10.0.0.7", None),
+                    pattern(None, wildcard, None),
+                ],
+            };
+            let error = authorize_literal(policy, NetworkScheme::Http, host, None)
+                .await
+                .expect_err("a policy carrying a wildcard exemption must be refused");
+            assert!(
+                error.is_wildcard_private_network_target(),
+                "{wildcard} / {host}: {error:?}"
+            );
+        }
     }
 }
 

@@ -36,6 +36,15 @@ pub enum NetworkPolicyError {
     },
     #[error("invalid network host pattern {pattern:?}: {reason}")]
     InvalidHostPattern { pattern: String, reason: String },
+    /// A `private_network_targets` entry carries a `*` wildcard. The
+    /// exemption names one endpoint; a wildcard would hand private-network
+    /// reach to every host the policy allows, so the whole policy is refused
+    /// rather than the entry quietly skipped.
+    #[error("private-network exemption {pattern:?} must name one host, not a wildcard")]
+    WildcardPrivateNetworkTarget {
+        scope: Box<ResourceScope>,
+        pattern: String,
+    },
     #[error("invalid network egress limit {raw:?}: {reason}")]
     InvalidEgressLimit { raw: String, reason: String },
 }
@@ -63,6 +72,10 @@ impl NetworkPolicyError {
 
     pub fn is_invalid_egress_limit(&self) -> bool {
         matches!(self, Self::InvalidEgressLimit { .. })
+    }
+
+    pub fn is_wildcard_private_network_target(&self) -> bool {
+        matches!(self, Self::WildcardPrivateNetworkTarget { .. })
     }
 }
 
@@ -199,6 +212,16 @@ fn authorize_static_policy(
     policy: &NetworkPolicy,
     request: NetworkRequest,
 ) -> Result<NetworkPermit, NetworkPolicyError> {
+    if let Some(wildcard) = policy
+        .private_network_targets
+        .iter()
+        .find(|pattern| pattern.host_pattern.contains('*'))
+    {
+        return Err(NetworkPolicyError::WildcardPrivateNetworkTarget {
+            scope: Box::new(request.scope),
+            pattern: wildcard.host_pattern.clone(),
+        });
+    }
     if let Some(limit) = policy.max_egress_bytes {
         let Some(estimated) = request.estimated_bytes else {
             return Err(NetworkPolicyError::EgressEstimateRequired {
@@ -310,9 +333,10 @@ pub(crate) fn private_ip_denied(
 
 /// Whether `target` matches an entry of `policy.private_network_targets`.
 ///
-/// Entries whose host pattern contains a `*` wildcard are ignored: the
-/// exemption is meant for one named endpoint, and `*` would hand
-/// private-network reach to every host the policy allows.
+/// Authorization refuses a policy with a wildcard entry outright
+/// ([`NetworkPolicyError::WildcardPrivateNetworkTarget`]). Wildcard entries
+/// are also skipped here, so the address checks that run after authorization
+/// (resolved IPs, redirect hops) can never be widened by one either.
 fn is_private_network_exempt(policy: &NetworkPolicy, target: &NetworkTarget) -> bool {
     policy
         .private_network_targets
