@@ -142,6 +142,21 @@ pub struct NetworkPolicy {
     pub allowed_targets: Vec<NetworkTargetPattern>,
     pub deny_private_ip_ranges: bool,
     pub max_egress_bytes: Option<u64>,
+    /// Targets that may reach a private-network address even though
+    /// `deny_private_ip_ranges` is set.
+    ///
+    /// This is a narrow exemption, not a grant: a target must still match
+    /// `allowed_targets`. A matching target may be, or resolve to, an RFC 1918,
+    /// loopback, IPv6 unique-local or carrier-grade NAT address. Link-local
+    /// (including cloud metadata), multicast, unspecified, broadcast and
+    /// documentation addresses stay denied. `ironclaw_network` only honours
+    /// entries with an exact host (no `*` wildcard).
+    ///
+    /// Empty by default, and omitted from the serialized form when empty, so
+    /// policies without an exemption serialize exactly as they did before
+    /// the field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub private_network_targets: Vec<NetworkTargetPattern>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -942,6 +942,8 @@ pub struct NetworkPolicy {
     pub allowed_targets: Vec<NetworkTargetPattern>,
     pub deny_private_ip_ranges: bool,
     pub max_egress_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub private_network_targets: Vec<NetworkTargetPattern>,
 }
 ```
 
@@ -951,6 +953,7 @@ Rules:
 
 - default `NetworkPolicy` denies outbound network
 - private IP / localhost / metadata endpoints are denied unless explicitly allowed
+- `private_network_targets` lets a listed target reach private-network addresses while `deny_private_ip_ranges` is on; link-local (metadata), multicast, unspecified, broadcast and documentation addresses stay denied (`network.md` §3.1)
 - runtime lanes do not create raw network clients that bypass `ironclaw_network`
 
 ---

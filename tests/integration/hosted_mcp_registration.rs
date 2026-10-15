@@ -107,6 +107,7 @@ fn runtime_context_for_host(
                         }],
                         deny_private_ip_ranges: true,
                         max_egress_bytes: Some(1_000_000),
+                        private_network_targets: Vec::new(),
                     },
                     secrets: Vec::new(),
                     resource_ceiling: None,

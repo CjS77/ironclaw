@@ -361,6 +361,7 @@ fn capability_grant(capability_id: &str, grantee: ExtensionId) -> CapabilityGran
                 }],
                 deny_private_ip_ranges: true,
                 max_egress_bytes: None,
+                private_network_targets: Vec::new(),
             },
             secrets: Vec::new(),
             resource_ceiling: None,

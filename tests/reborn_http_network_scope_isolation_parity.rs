@@ -166,6 +166,7 @@ fn allow_api_example_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -174,5 +175,6 @@ fn deny_all_network_policy() -> NetworkPolicy {
         allowed_targets: Vec::new(),
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }

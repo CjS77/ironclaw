@@ -184,6 +184,7 @@ async fn approving_pending_dispatch_request_preserves_reviewed_grant_constraints
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     };
     let secret = SecretHandle::new("api-key").unwrap();
     let resource_ceiling = ResourceCeiling {

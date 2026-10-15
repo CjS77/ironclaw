@@ -136,6 +136,7 @@ pub(super) fn vendor_network_policy(host: &str) -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(VENDOR_RESPONSE_BODY_LIMIT),
+        private_network_targets: Vec::new(),
     }
 }
 

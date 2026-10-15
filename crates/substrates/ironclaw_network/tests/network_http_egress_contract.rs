@@ -181,6 +181,233 @@ async fn http_egress_denies_private_resolved_host_before_transport() {
     assert!(requests.lock().unwrap().is_empty());
 }
 
+// --- Private-network exemption (`NetworkPolicy::private_network_targets`) ---
+//
+// The post-DNS path: the URL names a host, the resolver answers, and every
+// answer is checked before the transport is reached.
+
+const EXEMPT_HOST: &str = "sidecar.internal";
+
+/// Allows `EXEMPT_HOST` and `api.example.test`; exempts only `EXEMPT_HOST`.
+fn exempt_host_policy() -> NetworkPolicy {
+    let mut policy = policy(EXEMPT_HOST, None, true, None);
+    policy.allowed_targets.push(NetworkTargetPattern {
+        scheme: None,
+        host_pattern: "api.example.test".to_string(),
+        port: None,
+    });
+    policy.private_network_targets = vec![NetworkTargetPattern {
+        scheme: None,
+        host_pattern: EXEMPT_HOST.to_string(),
+        port: None,
+    }];
+    policy
+}
+
+async fn execute_with_resolved(
+    url: &str,
+    resolved: Vec<IpAddr>,
+    policy: NetworkPolicy,
+) -> (
+    Result<NetworkHttpResponse, NetworkHttpError>,
+    Vec<NetworkTransportRequest>,
+) {
+    let transport = RecordingTransport::ok(ok_response("ok"));
+    let requests = transport.requests.clone();
+    let egress =
+        PolicyNetworkHttpEgress::new_with_resolver(transport, StaticResolver::new(resolved));
+    // safety: HTTP egress `execute`, not a database operation.
+    let result = egress
+        .execute(NetworkHttpRequest {
+            scope: sample_scope(),
+            method: NetworkMethod::Get,
+            url: url.to_string(),
+            headers: vec![],
+            body: vec![],
+            policy,
+            response_body_limit: Some(1024),
+            timeout_ms: None,
+        })
+        .await;
+    let seen = requests.lock().unwrap().clone();
+    (result, seen)
+}
+
+fn ip(raw: &str) -> IpAddr {
+    raw.parse().unwrap()
+}
+
+#[tokio::test]
+async fn http_egress_exempt_host_may_resolve_to_private_addresses() {
+    for answer in [
+        vec![ip("10.0.0.5")],
+        vec![ip("192.168.1.20")],
+        vec![ip("127.0.0.1")],
+        vec![ip("::1")],
+        vec![ip("fd00::1")],
+        vec![ip("100.64.0.1")],
+        // Public and private answers together are both acceptable for an
+        // exempt host.
+        vec![ip("93.184.216.34"), ip("10.0.0.5")],
+    ] {
+        let (result, seen) = execute_with_resolved(
+            "http://sidecar.internal:8080/v1/send",
+            answer.clone(),
+            exempt_host_policy(),
+        )
+        .await;
+        result.unwrap_or_else(|error| panic!("{answer:?} should be allowed: {error}"));
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].resolved_ips, answer,
+            "transport is pinned to the vetted set"
+        );
+    }
+}
+
+#[tokio::test]
+async fn http_egress_exempt_host_never_reaches_always_blocked_addresses() {
+    for answer in [
+        vec![ip("169.254.169.254")],
+        vec![ip("fe80::1")],
+        vec![ip("224.0.0.1")],
+        vec![ip("ff02::1")],
+        vec![ip("0.0.0.0")],
+        vec![ip("::")],
+        vec![ip("255.255.255.255")],
+        vec![ip("192.0.2.1")],
+        vec![ip("2001:db8::1")],
+        vec![ip("::ffff:169.254.169.254")],
+        // One bad answer poisons the whole set, even next to an allowed one.
+        vec![ip("10.0.0.5"), ip("169.254.169.254")],
+    ] {
+        let (result, seen) = execute_with_resolved(
+            "http://sidecar.internal:8080/v1/send",
+            answer.clone(),
+            exempt_host_policy(),
+        )
+        .await;
+        let error = result.expect_err("always-blocked answers stay denied");
+        assert!(
+            matches!(error, NetworkHttpError::PolicyDenied { .. }),
+            "{answer:?}: {error:?}"
+        );
+        assert!(seen.is_empty(), "{answer:?} reached the transport");
+    }
+}
+
+#[tokio::test]
+async fn http_egress_non_exempt_host_resolving_private_is_still_denied() {
+    for answer in [
+        vec![ip("10.0.0.7")],
+        vec![ip("127.0.0.1")],
+        vec![ip("fd00::7")],
+        vec![ip("100.64.0.7")],
+        // Mixed public + private is denied for a non-exempt host, as before.
+        vec![ip("93.184.216.34"), ip("10.0.0.7")],
+    ] {
+        let (result, seen) = execute_with_resolved(
+            "https://api.example.test/v1",
+            answer.clone(),
+            exempt_host_policy(),
+        )
+        .await;
+        let error = result.expect_err("non-exempt private resolution must fail closed");
+        assert!(
+            matches!(error, NetworkHttpError::PolicyDenied { .. }),
+            "{answer:?}: {error:?}"
+        );
+        assert!(seen.is_empty(), "{answer:?} reached the transport");
+    }
+}
+
+#[tokio::test]
+async fn http_egress_exempt_ip_literal_is_checked_on_the_dns_path_too() {
+    // An IP-literal URL is checked by the static enforcer and again by the
+    // resolver step (which uses the literal instead of asking DNS).
+    let mut allowed = exempt_host_policy();
+    allowed.allowed_targets.push(NetworkTargetPattern {
+        scheme: None,
+        host_pattern: "10.0.0.5".to_string(),
+        port: None,
+    });
+    allowed.private_network_targets.push(NetworkTargetPattern {
+        scheme: None,
+        host_pattern: "10.0.0.5".to_string(),
+        port: None,
+    });
+    // The resolver would answer with a blocked address; it must not be asked.
+    let (result, seen) = execute_with_resolved(
+        "http://10.0.0.5:8080/v1/send",
+        vec![ip("169.254.169.254")],
+        allowed.clone(),
+    )
+    .await;
+    result.expect("exempt private literal should be allowed");
+    assert_eq!(seen[0].resolved_ips, vec![ip("10.0.0.5")]);
+
+    let mut metadata = allowed;
+    for list in [
+        &mut metadata.allowed_targets,
+        &mut metadata.private_network_targets,
+    ] {
+        list.push(NetworkTargetPattern {
+            scheme: None,
+            host_pattern: "169.254.169.254".to_string(),
+            port: None,
+        });
+    }
+    let (result, seen) = execute_with_resolved(
+        "http://169.254.169.254/latest/meta-data/",
+        vec![ip("10.0.0.5")],
+        metadata,
+    )
+    .await;
+    assert!(matches!(
+        result.expect_err("metadata literal stays denied"),
+        NetworkHttpError::PolicyDenied { .. }
+    ));
+    assert!(seen.is_empty());
+}
+
+#[tokio::test]
+async fn http_egress_redirect_from_exempt_host_to_other_private_target_is_denied() {
+    // Each hop is re-authorized against its own target: the exemption for the
+    // first host does not carry over to wherever its `Location` points.
+    let mut allow_any = exempt_host_policy();
+    allow_any.allowed_targets.push(NetworkTargetPattern {
+        scheme: None,
+        host_pattern: "*".to_string(),
+        port: None,
+    });
+    let transport = ScriptedTransport::new(vec![
+        redirect_response("http://10.0.0.99/admin"),
+        ok_response("should not be fetched"),
+    ]);
+    let requests = transport.requests.clone();
+    let egress = PolicyNetworkHttpEgress::new_with_resolver(
+        transport,
+        StaticResolver::new(vec![ip("10.0.0.5")]),
+    );
+
+    let error = egress
+        .execute(NetworkHttpRequest {
+            scope: sample_scope(),
+            method: NetworkMethod::Get,
+            url: "http://sidecar.internal:8080/v1/send".to_string(),
+            headers: vec![],
+            body: vec![],
+            policy: allow_any,
+            response_body_limit: Some(1024),
+            timeout_ms: None,
+        })
+        .await
+        .expect_err("redirect to a non-exempt private target must fail closed");
+
+    assert!(matches!(error, NetworkHttpError::PolicyDenied { .. }));
+    assert_eq!(requests.lock().unwrap().len(), 1, "only the first hop ran");
+}
+
 #[tokio::test]
 async fn http_egress_counts_url_and_headers_in_policy_egress_estimate_before_transport() {
     let transport = RecordingTransport::ok(NetworkHttpResponse {
@@ -1114,6 +1341,7 @@ fn policy(
         }],
         deny_private_ip_ranges,
         max_egress_bytes,
+        private_network_targets: Vec::new(),
     }
 }
 

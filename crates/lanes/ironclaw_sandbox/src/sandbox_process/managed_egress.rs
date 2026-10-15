@@ -1623,6 +1623,11 @@ fn render_proxy_config_inner(
                 .to_string(),
         ));
     }
+    if !policy.private_network_targets.is_empty() {
+        return Err(RuntimeProcessError::ExecutionFailed(
+            "sandbox managed egress proxy cannot honour private-network exemptions".to_string(),
+        ));
+    }
     reject_wildcard_targets(policy)?;
 
     let mut headers = [
@@ -2122,6 +2127,7 @@ mod tests {
             ],
             deny_private_ip_ranges: true,
             max_egress_bytes: None,
+            private_network_targets: Vec::new(),
         }
     }
 
@@ -2275,6 +2281,7 @@ mod tests {
             }],
             deny_private_ip_ranges: true,
             max_egress_bytes: None,
+            private_network_targets: Vec::new(),
         };
         let credentials = [ProxyCredentialRule {
             bundle_key: "atlas\"key\n".to_string(),
@@ -2346,6 +2353,10 @@ mod tests {
         let mut byte_limited = policy();
         byte_limited.max_egress_bytes = Some(1024);
         assert!(render_proxy_config(&byte_limited, "172.28.10.2").is_err());
+
+        let mut private_exempt = policy();
+        private_exempt.private_network_targets = vec![private_exempt.allowed_targets[0].clone()];
+        assert!(render_proxy_config(&private_exempt, "172.28.10.2").is_err());
 
         open.deny_private_ip_ranges = true;
         open.allowed_targets.clear();

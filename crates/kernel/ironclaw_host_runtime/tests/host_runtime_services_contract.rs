@@ -4751,6 +4751,7 @@ async fn host_runtime_services_projects_resource_network_secret_obligation_audit
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     };
     let authorizer: Arc<dyn TrustAwareCapabilityDispatchAuthorizer> =
         Arc::new(ObligatingAuthorizer::new(vec![

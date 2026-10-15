@@ -1647,6 +1647,7 @@ fn staged_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(4096),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -1659,6 +1660,7 @@ fn caller_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: false,
         max_egress_bytes: Some(1),
+        private_network_targets: Vec::new(),
     }
 }
 

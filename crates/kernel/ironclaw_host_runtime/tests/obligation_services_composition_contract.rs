@@ -78,6 +78,7 @@ async fn default_runtime_installs_configured_builtin_obligation_services() {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(2048),
+        private_network_targets: Vec::new(),
     };
     let reservation_id = ResourceReservationId::new();
     let network = RecordingNetwork::default();

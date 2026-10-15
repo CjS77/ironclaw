@@ -215,9 +215,8 @@ fn authorize_static_policy(
         }
     }
 
-    if policy.deny_private_ip_ranges
-        && let Ok(ip) = request.target.host.parse::<IpAddr>()
-        && is_private_or_loopback_ip(ip)
+    if let Ok(ip) = request.target.host.parse::<IpAddr>()
+        && private_ip_denied(policy, &request.target, ip)
     {
         return Err(NetworkPolicyError::PrivateTargetDenied {
             scope: Box::new(request.scope),
@@ -244,9 +243,8 @@ pub(crate) fn network_policy_allows(policy: &NetworkPolicy, target: &NetworkTarg
     if policy.allowed_targets.is_empty() {
         return false;
     }
-    if policy.deny_private_ip_ranges
-        && let Ok(ip) = target.host.parse::<IpAddr>()
-        && is_private_or_loopback_ip(ip)
+    if let Ok(ip) = target.host.parse::<IpAddr>()
+        && private_ip_denied(policy, target, ip)
     {
         return false;
     }
@@ -284,6 +282,72 @@ fn host_matches_pattern(host: &str, pattern: &str) -> bool {
         !prefix.is_empty() && !prefix.contains('.')
     } else {
         host == pattern
+    }
+}
+
+/// Whether `policy` refuses to let `target` reach `ip` because the address is
+/// private or host-local.
+///
+/// With `deny_private_ip_ranges` off, nothing is refused here. With it on,
+/// every private or host-local address is refused, except that a target
+/// matching an entry of `private_network_targets` may reach the
+/// private-network subset (RFC 1918, loopback, IPv6 unique-local,
+/// carrier-grade NAT). The [`is_always_blocked_ip`] class is refused even for
+/// an exempt target.
+///
+/// Callers apply this to an IP-literal target and to every address a hostname
+/// resolves to, so the exemption reads the same on both paths.
+pub(crate) fn private_ip_denied(
+    policy: &NetworkPolicy,
+    target: &NetworkTarget,
+    ip: IpAddr,
+) -> bool {
+    if !policy.deny_private_ip_ranges || !is_private_or_loopback_ip(ip) {
+        return false;
+    }
+    is_always_blocked_ip(ip) || !is_private_network_exempt(policy, target)
+}
+
+/// Whether `target` matches an entry of `policy.private_network_targets`.
+///
+/// Entries whose host pattern contains a `*` wildcard are ignored: the
+/// exemption is meant for one named endpoint, and `*` would hand
+/// private-network reach to every host the policy allows.
+fn is_private_network_exempt(policy: &NetworkPolicy, target: &NetworkTarget) -> bool {
+    policy
+        .private_network_targets
+        .iter()
+        .filter(|pattern| !pattern.host_pattern.contains('*'))
+        .any(|pattern| target_matches_pattern(target, pattern))
+}
+
+/// Addresses no network policy exemption may reach: link-local (including
+/// the `169.254.169.254` cloud metadata endpoint and `fe80::/10`), multicast,
+/// unspecified and the IPv4 "this network" block `0.0.0.0/8`, the IPv4
+/// limited broadcast address, and the documentation ranges. IPv4-mapped IPv6
+/// addresses are judged by the IPv4 address they map to.
+///
+/// Every address here is also in [`is_private_or_loopback_ip`], so the class
+/// only narrows what an exemption allows; it never changes a policy without
+/// one.
+pub(crate) fn is_always_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_link_local()
+                || ip.is_multicast()
+                || ip.octets()[0] == 0
+                || ip.is_broadcast()
+                || ip.is_documentation()
+        }
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_always_blocked_ip(IpAddr::V4(mapped));
+            }
+            ip.is_unicast_link_local()
+                || ip.is_multicast()
+                || ip.is_unspecified()
+                || is_documentation_v6(ip)
+        }
     }
 }
 

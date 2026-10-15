@@ -179,6 +179,7 @@ pub(crate) fn metadata_network_policy(url: &str) -> Result<NetworkPolicy, Produc
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(64 * 1024),
+        private_network_targets: Vec::new(),
     })
 }
 

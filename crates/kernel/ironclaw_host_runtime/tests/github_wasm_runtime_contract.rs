@@ -3110,6 +3110,7 @@ fn slack_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -3284,6 +3285,7 @@ fn google_policy(host_pattern: &str) -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -3562,6 +3564,7 @@ fn github_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
 

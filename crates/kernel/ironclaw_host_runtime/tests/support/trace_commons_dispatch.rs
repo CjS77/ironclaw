@@ -302,6 +302,7 @@ pub fn allow_all_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: false,
         max_egress_bytes: None,
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -318,6 +319,7 @@ pub fn deny_private_ip_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: None,
+        private_network_targets: Vec::new(),
     }
 }
 

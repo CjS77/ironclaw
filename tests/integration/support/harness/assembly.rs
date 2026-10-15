@@ -677,6 +677,7 @@ pub(crate) fn http_test_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -689,6 +690,7 @@ pub(crate) fn wildcard_test_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1_000_000),
+        private_network_targets: Vec::new(),
     }
 }
 

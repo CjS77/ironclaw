@@ -319,6 +319,7 @@ impl ChannelEgressTransport for HostRuntimeChannelEgressTransport {
                         }],
                         deny_private_ip_ranges: true,
                         max_egress_bytes: None,
+                        private_network_targets: Vec::new(),
                     },
                     credential_injections: Vec::new(),
                     response_body_limit: Some(approved.response_body_limit),

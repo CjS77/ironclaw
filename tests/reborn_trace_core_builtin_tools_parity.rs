@@ -292,5 +292,6 @@ fn live_http_network_policy(port: u16) -> NetworkPolicy {
         }],
         deny_private_ip_ranges: false,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }

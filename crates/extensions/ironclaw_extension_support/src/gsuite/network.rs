@@ -27,6 +27,7 @@ pub fn google_api_network_policy() -> NetworkPolicy {
         ],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10 * 1024 * 1024),
+        private_network_targets: Vec::new(),
     }
 }
 

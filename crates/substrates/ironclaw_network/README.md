@@ -25,7 +25,10 @@ crate that needed even the policy types.
 - Egress: `NetworkHttpEgress` port + `PolicyNetworkHttpEgress`,
   `NetworkHttpTransport` (`egress`).
 - Resolution: `NetworkResolver` (`resolver`) — denies private and reserved
-  addresses before a connection opens.
+  addresses before a connection opens. A target listed in the policy's
+  `private_network_targets` may reach private-network addresses, but never
+  link-local, multicast, unspecified, broadcast or documentation ones
+  (contract: `docs/internal/reborn/contracts/network.md` §3.1).
 - Transport: `ReqwestNetworkTransport` (`transport`), with the default
   request header set chosen by `OutboundIdentity` (Chrome by default).
 - Types: `NetworkRequest`, `NetworkHttpRequest`/`NetworkHttpResponse`,

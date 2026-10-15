@@ -1794,7 +1794,55 @@ fn sample_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024 * 1024),
+        private_network_targets: Vec::new(),
     }
+}
+
+/// `NetworkPolicy` is serialized inside persisted capability leases
+/// (`GrantConstraints.network`), `Obligation::ApplyNetworkPolicy`, and runtime
+/// HTTP egress requests. A policy with no private-network exemption must keep
+/// the exact bytes it had before `private_network_targets` existed, and those
+/// older bytes must still decode.
+#[test]
+fn network_policy_without_private_exemption_serializes_byte_identically() {
+    let pre_exemption_policy_json = r#"{"allowed_targets":[{"scheme":"https","host_pattern":"api.example.test","port":null}],"deny_private_ip_ranges":true,"max_egress_bytes":1048576}"#;
+
+    let policy = sample_network_policy();
+    assert_eq!(
+        serde_json::to_string(&policy).unwrap(),
+        pre_exemption_policy_json
+    );
+    assert_eq!(
+        serde_json::to_string(&Obligation::ApplyNetworkPolicy {
+            policy: policy.clone()
+        })
+        .unwrap(),
+        format!(r#"{{"type":"apply_network_policy","policy":{pre_exemption_policy_json}}}"#)
+    );
+
+    let decoded: NetworkPolicy = serde_json::from_str(pre_exemption_policy_json).unwrap();
+    assert_eq!(decoded, policy);
+    assert!(decoded.private_network_targets.is_empty());
+}
+
+#[test]
+fn network_policy_private_exemption_round_trips_when_present() {
+    let policy = NetworkPolicy {
+        private_network_targets: vec![NetworkTargetPattern {
+            scheme: Some(NetworkScheme::Http),
+            host_pattern: "sidecar.internal".to_string(),
+            port: Some(8080),
+        }],
+        ..sample_network_policy()
+    };
+
+    let wire = serde_json::to_value(&policy).unwrap();
+    assert_eq!(
+        wire["private_network_targets"],
+        json!([{"scheme": "http", "host_pattern": "sidecar.internal", "port": 8080}])
+    );
+    let decoded: NetworkPolicy = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded, policy);
 }
 
 #[test]

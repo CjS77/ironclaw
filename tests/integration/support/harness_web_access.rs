@@ -129,6 +129,7 @@ pub(super) fn exa_mcp_test_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(NETWORK_EGRESS_LIMIT),
+        private_network_targets: Vec::new(),
     }
 }
 

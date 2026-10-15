@@ -470,6 +470,7 @@ mod tests {
             }],
             deny_private_ip_ranges: true,
             max_egress_bytes: Some(1024),
+            private_network_targets: Vec::new(),
         }
     }
 }

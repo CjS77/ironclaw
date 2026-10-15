@@ -580,6 +580,7 @@ async fn standalone_adapter_invokes_builtin_shell_through_product_live_surface()
                 }],
                 deny_private_ip_ranges: false,
                 max_egress_bytes: None,
+                private_network_targets: Vec::new(),
             },
             secrets: Vec::new(),
             resource_ceiling: None,
@@ -1836,6 +1837,7 @@ fn local_host_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: None,
+        private_network_targets: Vec::new(),
     }
 }
 
