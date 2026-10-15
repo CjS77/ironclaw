@@ -195,6 +195,7 @@ fn hosted_mcp_network_policy_for_endpoint(endpoint: &HostedMcpEgressEndpoint) ->
         // Dispatcher would reject anyway, but the plan must agree.
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(MCP_NETWORK_EGRESS_LIMIT),
+        private_network_targets: Vec::new(),
     }
 }
 

@@ -82,6 +82,20 @@ V1 semantics intentionally mirror the current WASM network import policy checks 
 - wildcard patterns do not match the apex host itself or deeper multi-label subdomains
 - `deny_private_ip_ranges` blocks literal private, loopback, link-local, documentation, broadcast, multicast, unspecified, carrier-grade NAT, IPv4-mapped IPv6 private ranges, and unique-local IP targets
 - `max_egress_bytes` requires a request-byte estimate and denies requests whose estimated bytes exceed the configured limit. Host-mediated HTTP estimates include the method, URL, headers, HTTP framing overhead, and body so large URLs or headers cannot bypass the limit.
+- `private_network_targets` is an opt-in exemption from `deny_private_ip_ranges`, described below. It is empty by default and is not serialized when empty, so existing policies, persisted leases and obligations keep their exact bytes.
+
+### 3.1 Private-network exemption
+
+Some deployments need one named endpoint on the local network, such as a sidecar container. `NetworkPolicy.private_network_targets` lists the targets that may do that. The rules are:
+
+- The exemption only lifts the private-address denial. A target must still match `allowed_targets`; an exempt target that is not allowed is denied as `TargetDenied`.
+- A target is exempt when it matches an entry with the same rules as `allowed_targets` (scheme and port must match when the entry sets them). Entries whose host pattern contains `*` are ignored, so a wildcard can never hand private-network reach to every allowed host.
+- An exempt target may be, or resolve to, a private-network address: RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), loopback (`127/8`, `::1`), IPv6 unique-local (`fc00::/7`) or carrier-grade NAT (`100.64/10`). IPv4-mapped IPv6 addresses are judged by the IPv4 address they map to.
+- The always-blocked class stays denied even for an exempt target: link-local (`169.254/16`, which includes the `169.254.169.254` cloud metadata endpoint, and `fe80::/10`), multicast (`224/4`, `ff00::/8`), unspecified and "this network" (`0/8`, `::`), the limited broadcast address `255.255.255.255`, and the documentation ranges (`192.0.2/24`, `198.51.100/24`, `203.0.113/24`, `2001:db8::/32`).
+- The same check runs on an IP-literal target in the static enforcer, on every address a hostname resolves to, and on every redirect hop. One blocked address in a resolved set denies the whole request. A redirect is judged by its own target, so an exempt host cannot redirect to a private address that is not itself exempt.
+- With `deny_private_ip_ranges` off, the field has no effect. Targets that are not exempt are treated exactly as before.
+
+No production policy sets this field yet. The sandbox managed-egress proxy cannot honour an exemption and rejects a policy that carries one.
 
 HTTP egress rejects URL userinfo before policy, DNS, or transport so credentials cannot be smuggled through an allowlisted host URL. It resolves hostnames before dispatch and denies the request before transport when `deny_private_ip_ranges` is true and any resolved address is private, loopback, link-local, documentation, multicast, broadcast, unspecified, carrier-grade NAT, unique-local, or an IPv4-mapped IPv6 address that maps to a non-public IPv4 address. The default transport disables its own redirect handling; `PolicyNetworkHttpEgress` follows redirects instead, re-running URL validation, policy authorization, and private-IP DNS denial for every hop and carrying no caller header across a hop. The transport pins the request to the vetted resolved address set so a later DNS answer cannot silently change the destination for that request, while still allowing connector-level fallback across alternate A/AAAA answers. Caller-provided `Host` headers are rejected before transport so virtual-host routing cannot diverge from the URL host that policy validated. Runtime-visible response bodies are always bounded: omitted and oversized explicit `response_body_limit` values clamp to the V1 default in-memory cap rather than reading unbounded data.
 
@@ -157,6 +171,7 @@ The crate tests cover:
 - estimated egress limit denial
 - missing egress estimate denial when a limit is configured
 - literal non-public IP denial
+- private-network exemption: exempt literals and exempt hostnames may reach RFC 1918, loopback, unique-local and carrier-grade NAT addresses; always-blocked addresses stay denied for exempt targets; non-exempt targets (including mixed public and private answers) stay denied; wildcard exemptions are ignored; the exemption needs a matching allow entry and matching scheme/port; redirects from an exempt host to a non-exempt private target are denied
 - IPv4-mapped IPv6 private address denial
 - hostname resolution to non-public IP denial before transport
 - method + URL + header byte counting for `max_egress_bytes`

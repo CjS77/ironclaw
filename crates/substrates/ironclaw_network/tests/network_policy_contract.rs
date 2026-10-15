@@ -4,8 +4,8 @@ use ironclaw_host_api::{
     resource::ResourceScope,
 };
 use ironclaw_network::{
-    NetworkRequest, StaticNetworkPolicyEnforcer, network_target_for_url, parse_host_pattern,
-    target_matches_pattern,
+    NetworkPolicyError, NetworkRequest, StaticNetworkPolicyEnforcer, network_target_for_url,
+    parse_host_pattern, target_matches_pattern,
 };
 
 #[tokio::test]
@@ -19,6 +19,7 @@ async fn network_policy_allows_exact_scoped_target_without_executing_io() {
         )],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     };
     let enforcer = StaticNetworkPolicyEnforcer::new(policy);
 
@@ -44,6 +45,7 @@ async fn network_policy_supports_one_label_wildcard_hosts_only() {
         allowed_targets: vec![pattern(Some(NetworkScheme::Https), "*.example.test", None)],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     });
     let scope = sample_scope("tenant-a", "user-a");
 
@@ -99,6 +101,7 @@ async fn network_policy_supports_any_host_wildcard_with_private_ip_guard() {
         allowed_targets: vec![pattern(None, "*", None)],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     });
     let scope = sample_scope("tenant-a", "user-a");
 
@@ -157,6 +160,7 @@ async fn network_policy_denies_scheme_host_port_and_egress_mismatches() {
         )],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10),
+        private_network_targets: Vec::new(),
     });
     let scope = sample_scope("tenant-a", "user-a");
 
@@ -212,6 +216,7 @@ async fn network_policy_denies_non_public_literal_ips_allowed_by_host_contract()
             allowed_targets: vec![pattern(Some(NetworkScheme::Http), host, None)],
             deny_private_ip_ranges: true,
             max_egress_bytes: Some(1024),
+            private_network_targets: Vec::new(),
         });
         let scope = sample_scope("tenant-a", "user-a");
 
@@ -237,6 +242,7 @@ async fn network_policy_denies_ipv4_mapped_private_ipv6_literals() {
             allowed_targets: vec![pattern(Some(NetworkScheme::Http), host, None)],
             deny_private_ip_ranges: true,
             max_egress_bytes: Some(1024),
+            private_network_targets: Vec::new(),
         });
         let scope = sample_scope("tenant-a", "user-a");
 
@@ -258,6 +264,7 @@ async fn network_policy_denies_ipv4_mapped_private_ipv6_literals() {
         allowed_targets: vec![pattern(Some(NetworkScheme::Http), public_mapped_host, None)],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     });
     enforcer
         .authorize(NetworkRequest {
@@ -280,6 +287,7 @@ async fn network_policy_requires_egress_estimate_when_limit_is_configured() {
         )],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10),
+        private_network_targets: Vec::new(),
     });
     let scope = sample_scope("tenant-a", "user-a");
 
@@ -312,6 +320,179 @@ async fn network_policy_is_fail_closed_without_allowed_targets() {
         .unwrap_err();
 
     assert!(err.is_target_denied());
+}
+
+// --- Private-network exemption (`NetworkPolicy::private_network_targets`) ---
+//
+// The literal-IP path: the target host is itself an IP address, so the
+// decision is made by the static enforcer before any DNS lookup.
+
+/// A policy that allows exactly `host` and exempts exactly `host` from the
+/// private-address denial.
+fn exempt_literal_policy(host: &str) -> NetworkPolicy {
+    NetworkPolicy {
+        allowed_targets: vec![pattern(None, host, None)],
+        deny_private_ip_ranges: true,
+        max_egress_bytes: Some(1024),
+        private_network_targets: vec![pattern(None, host, None)],
+    }
+}
+
+async fn authorize_literal(
+    policy: NetworkPolicy,
+    scheme: NetworkScheme,
+    host: &str,
+    port: Option<u16>,
+) -> Result<NetworkTarget, NetworkPolicyError> {
+    StaticNetworkPolicyEnforcer::new(policy)
+        .authorize(NetworkRequest {
+            scope: sample_scope("tenant-a", "user-a"),
+            target: target(scheme, host, port),
+            method: NetworkMethod::Get,
+            estimated_bytes: Some(0),
+        })
+        .await
+        .map(|permit| permit.target)
+}
+
+#[tokio::test]
+async fn private_exemption_allows_exempt_literal_private_addresses() {
+    for host in [
+        "10.1.2.3",
+        "172.16.0.1",
+        "192.168.1.10",
+        "127.0.0.1",
+        "::1",
+        "fd00::1",
+        "100.64.0.1",
+        "::ffff:10.0.0.1",
+    ] {
+        let allowed = authorize_literal(
+            exempt_literal_policy(host),
+            NetworkScheme::Http,
+            host,
+            Some(8080),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("exempt private literal {host} should be allowed: {error}"));
+        assert_eq!(allowed.host, host);
+    }
+}
+
+#[tokio::test]
+async fn private_exemption_never_allows_always_blocked_literal_addresses() {
+    for host in [
+        "169.254.169.254",
+        "169.254.1.1",
+        "fe80::1",
+        "224.0.0.1",
+        "ff02::1",
+        "0.0.0.0",
+        "0.1.2.3",
+        "::",
+        "255.255.255.255",
+        "192.0.2.1",
+        "198.51.100.1",
+        "203.0.113.1",
+        "2001:db8::1",
+        "::ffff:169.254.169.254",
+    ] {
+        let error = authorize_literal(
+            exempt_literal_policy(host),
+            NetworkScheme::Http,
+            host,
+            Some(8080),
+        )
+        .await
+        .expect_err("always-blocked addresses stay denied for exempt targets");
+        assert!(
+            error.is_private_target_denied(),
+            "{host} should be a private-target denial, got {error:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn private_exemption_does_not_cover_other_literal_targets() {
+    // `*` allows every host, and a different host is exempt: a private literal
+    // that is not itself exempt is still denied exactly as before.
+    let policy = NetworkPolicy {
+        allowed_targets: vec![pattern(None, "*", None)],
+        deny_private_ip_ranges: true,
+        max_egress_bytes: Some(1024),
+        private_network_targets: vec![pattern(None, "10.0.0.5", None)],
+    };
+    for host in ["10.0.0.7", "127.0.0.1", "fd00::2", "100.64.0.9"] {
+        let error = authorize_literal(policy.clone(), NetworkScheme::Https, host, None)
+            .await
+            .expect_err("non-exempt private literal must stay denied");
+        assert!(error.is_private_target_denied(), "{host}: {error:?}");
+    }
+    authorize_literal(policy, NetworkScheme::Https, "10.0.0.5", None)
+        .await
+        .expect("the exempt literal itself is allowed");
+}
+
+#[tokio::test]
+async fn private_exemption_is_not_an_allow_grant() {
+    // Exempt but not in `allowed_targets`: the exemption only lifts the
+    // private-address denial, it never allows a target by itself.
+    let policy = NetworkPolicy {
+        allowed_targets: vec![pattern(None, "api.example.test", None)],
+        deny_private_ip_ranges: true,
+        max_egress_bytes: Some(1024),
+        private_network_targets: vec![pattern(None, "10.0.0.5", None)],
+    };
+    let error = authorize_literal(policy, NetworkScheme::Http, "10.0.0.5", None)
+        .await
+        .expect_err("exemption without an allow entry must be denied");
+    assert!(error.is_target_denied(), "{error:?}");
+}
+
+#[tokio::test]
+async fn private_exemption_ignores_wildcard_entries() {
+    // A wildcard exemption would turn the narrow opt-in back into "every host
+    // may reach the private network". It is ignored rather than honoured.
+    for wildcard in ["*", "*.internal"] {
+        let policy = NetworkPolicy {
+            allowed_targets: vec![pattern(None, "*", None)],
+            deny_private_ip_ranges: true,
+            max_egress_bytes: Some(1024),
+            private_network_targets: vec![pattern(None, wildcard, None)],
+        };
+        let error = authorize_literal(policy, NetworkScheme::Http, "10.0.0.7", None)
+            .await
+            .expect_err("a wildcard exemption must not exempt anything");
+        assert!(error.is_private_target_denied(), "{wildcard}: {error:?}");
+    }
+}
+
+#[tokio::test]
+async fn private_exemption_must_match_scheme_and_port_when_given() {
+    let policy = NetworkPolicy {
+        allowed_targets: vec![pattern(None, "10.0.0.5", None)],
+        deny_private_ip_ranges: true,
+        max_egress_bytes: Some(1024),
+        private_network_targets: vec![pattern(Some(NetworkScheme::Http), "10.0.0.5", Some(8080))],
+    };
+
+    authorize_literal(policy.clone(), NetworkScheme::Http, "10.0.0.5", Some(8080))
+        .await
+        .expect("matching scheme and port is exempt");
+
+    for (scheme, port) in [
+        (NetworkScheme::Https, Some(8080)),
+        (NetworkScheme::Http, Some(9090)),
+        (NetworkScheme::Http, None),
+    ] {
+        let error = authorize_literal(policy.clone(), scheme, "10.0.0.5", port)
+            .await
+            .expect_err("a scheme or port outside the exemption stays denied");
+        assert!(
+            error.is_private_target_denied(),
+            "{scheme:?}:{port:?}: {error:?}"
+        );
+    }
 }
 
 fn target(scheme: NetworkScheme, host: &str, port: Option<u16>) -> NetworkTarget {

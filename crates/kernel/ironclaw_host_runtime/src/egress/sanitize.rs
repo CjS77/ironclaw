@@ -249,6 +249,7 @@ mod tests {
                 allowed_targets: vec![],
                 deny_private_ip_ranges: true,
                 max_egress_bytes: Some(4096),
+                private_network_targets: Vec::new(),
             },
             credential_injections: vec![],
             response_body_limit: Some(4096),

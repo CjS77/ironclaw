@@ -167,6 +167,7 @@ pub fn classifier_for(url: &str, timeout_ms: u64, host: &str) -> JevToolClassifi
         }],
         deny_private_ip_ranges: false,
         max_egress_bytes: None,
+        private_network_targets: Vec::new(),
     };
     let key = JevApiKey::new(API_KEY).expect("key");
     let timeout = Duration::from_millis(timeout_ms);

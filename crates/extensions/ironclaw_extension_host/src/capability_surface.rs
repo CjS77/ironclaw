@@ -224,6 +224,7 @@ pub fn extension_network_policy(capability: &ActiveExtensionCapability) -> Netwo
         allowed_targets: targets,
         deny_private_ip_ranges: has_egress_targets,
         max_egress_bytes: capability.max_egress_bytes.filter(|_| has_egress_targets),
+        private_network_targets: Vec::new(),
     }
 }
 
@@ -269,6 +270,7 @@ mod tests {
             allowed_targets: google_api_network_targets(),
             deny_private_ip_ranges: true,
             max_egress_bytes: Some(GSUITE_EGRESS_LIMIT),
+            private_network_targets: Vec::new(),
         }
     }
 

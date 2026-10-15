@@ -162,6 +162,7 @@ async fn capability_access_returns_grant_constraints_as_runtime_obligations() {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     };
     let mut grant = grant_for(
         descriptor.id.clone(),
@@ -235,6 +236,7 @@ async fn capability_access_allows_first_party_dynamic_secret_consumers_without_s
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(1024),
+        private_network_targets: Vec::new(),
     };
     let mut grant = grant_for(
         descriptor.id.clone(),

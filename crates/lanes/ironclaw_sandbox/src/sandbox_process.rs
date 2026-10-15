@@ -1229,6 +1229,7 @@ mod tests {
                 }],
                 deny_private_ip_ranges: true,
                 max_egress_bytes: None,
+                private_network_targets: Vec::new(),
             },
             directory.path().to_path_buf(),
         )
@@ -1469,6 +1470,7 @@ mod tests {
                 }],
                 deny_private_ip_ranges: true,
                 max_egress_bytes: None,
+                private_network_targets: Vec::new(),
             },
             directory.path().to_path_buf(),
         )

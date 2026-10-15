@@ -126,6 +126,7 @@ pub fn sandbox_network_policy() -> Result<NetworkPolicy, NetworkPolicyError> {
         // CONNECT carries opaque TLS. Do not advertise the host-mediated HTTP
         // request-estimate ceiling as a wire-byte limit the proxy cannot enforce.
         max_egress_bytes: None,
+        private_network_targets: Vec::new(),
     })
 }
 

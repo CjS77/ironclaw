@@ -250,6 +250,7 @@ fn product_gesture_grant(
             // manifest allowlist.
             deny_private_ip_ranges: has_network_targets,
             max_egress_bytes: None,
+            private_network_targets: Vec::new(),
         }
     };
     CapabilityGrant {

@@ -2,7 +2,7 @@ use std::net::{IpAddr, ToSocketAddrs};
 
 use ironclaw_host_api::action::{NetworkPolicy, NetworkTarget};
 
-use crate::{error::NetworkHttpError, policy::is_private_or_loopback_ip, url_target::default_port};
+use crate::{error::NetworkHttpError, policy::private_ip_denied, url_target::default_port};
 
 pub trait NetworkResolver: Send + Sync {
     fn resolve_ips(&self, host: &str, port: u16) -> Result<Vec<IpAddr>, NetworkHttpError>;
@@ -55,7 +55,9 @@ where
             response_bytes: 0,
         });
     }
-    if policy.deny_private_ip_ranges && resolved_ips.iter().copied().any(is_private_or_loopback_ip)
+    if resolved_ips
+        .iter()
+        .any(|ip| private_ip_denied(policy, target, *ip))
     {
         return Err(NetworkHttpError::PolicyDenied {
             reason: "network target resolves to a private or host-local IP".to_string(),

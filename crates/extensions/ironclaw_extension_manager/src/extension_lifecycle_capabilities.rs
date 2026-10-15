@@ -2711,6 +2711,7 @@ mod tests {
                     }],
                     deny_private_ip_ranges: true,
                     max_egress_bytes: None,
+                    private_network_targets: Vec::new(),
                 },
                 secrets: Vec::new(),
                 resource_ceiling: None,

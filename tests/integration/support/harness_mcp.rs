@@ -238,6 +238,7 @@ pub(super) fn mcp_loopback_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: false,
         max_egress_bytes: Some(1_000_000),
+        private_network_targets: Vec::new(),
     }
 }
 

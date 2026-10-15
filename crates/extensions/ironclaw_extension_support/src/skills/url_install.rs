@@ -226,6 +226,7 @@ fn skill_url_network_policy() -> NetworkPolicy {
             .collect(),
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(SKILL_URL_RESPONSE_BODY_LIMIT_BYTES),
+        private_network_targets: Vec::new(),
     }
 }
 

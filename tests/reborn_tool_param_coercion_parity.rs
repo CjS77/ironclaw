@@ -226,5 +226,6 @@ fn http_network_policy() -> NetworkPolicy {
         }],
         deny_private_ip_ranges: true,
         max_egress_bytes: Some(10_000),
+        private_network_targets: Vec::new(),
     }
 }
