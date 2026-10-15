@@ -626,7 +626,7 @@ fn rejects_multiple_linear_memories_that_exceed_aggregate_memory_budget() {
 }
 
 // The next two tests pin the lane's two independent CPU stops against a guest
-// that never yields. Each one disables the *other* stop, so a Wasmtime upgrade
+// that never yields. Each one puts the *other* stop out of reach, so a Wasmtime upgrade
 // that quietly stops charging fuel, or stops honouring the epoch deadline,
 // fails here rather than letting an untrusted component spin forever.
 // safety: `runtime.execute` below runs a WASM guest, not a database statement,
@@ -668,8 +668,11 @@ fn fuel_budget_stops_a_guest_that_never_yields() {
 fn epoch_deadline_stops_a_guest_that_never_yields() {
     let runtime = WitToolRuntime::new(WitToolRuntimeConfig {
         default_limits: ironclaw_wasm::wasm_sandbox_core::SandboxLimits::default()
-            // Effectively unlimited fuel: only the epoch deadline can end this call.
-            .with_fuel(u64::MAX)
+            // Fuel for many seconds of spinning, so only the epoch deadline
+            // (one 500 ms tick here) can end this call in time. It stays
+            // bounded so a broken deadline fails the assertion below instead of
+            // hanging the test forever.
+            .with_fuel(20_000_000_000)
             .with_timeout(std::time::Duration::from_millis(300)),
     })
     .unwrap();
