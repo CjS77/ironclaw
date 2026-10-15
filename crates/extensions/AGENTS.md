@@ -1,6 +1,6 @@
 # `crates/extensions/` — everything "installable package"
 
-**Layer(s):** substrates (`ironclaw_extension_registry`, both memory providers, the Jev tool-selection provider) · runtimes (`ironclaw_extension_support`) · loops (`ironclaw_extension_host`) · products (`ironclaw_extension_manager`, the channel packages) · **Crates:** 10 (re-derive: `find crates/extensions -maxdepth 3 -name Cargo.toml | wc -l` — 4 family crates + 6 crate-bearing packages under `ls -d crates/extensions/packages/*/`, which lists 16 packages total) · **May depend on:** downward only, per crate — the registry reaches contracts + `ironclaw_filesystem`; the host reaches kernel, domains, and loop; packages reach contracts (+ the domain contract a provider implements) · **Depended on by:** the binary (`ironclaw_cli`) and `ironclaw_composition`; the registry additionally by kernel/lanes/loop/events crates that read manifest vocabulary; `ironclaw_webui` holds one sanctioned edge onto the host (pairing).
+**Layer(s):** substrates (`ironclaw_extension_registry`, both memory providers, the Jev tool-selection provider) · runtimes (`ironclaw_extension_support`) · loops (`ironclaw_extension_host`) · products (`ironclaw_extension_manager`, the channel packages) · **Crates:** 10 (re-derive: `find crates/extensions -maxdepth 3 -name Cargo.toml | wc -l` — 4 family crates + 6 crate-bearing packages under `ls -d crates/extensions/packages/*/`, which lists 17 packages total) · **May depend on:** downward only, per crate — the registry reaches contracts + `ironclaw_filesystem`; the host reaches kernel, domains, and loop; packages reach contracts (+ the domain contract a provider implements) · **Depended on by:** the binary (`ironclaw_cli`) and `ironclaw_composition`; the registry additionally by kernel/lanes/loop/events crates that read manifest vocabulary; `ironclaw_webui` holds one sanctioned edge onto the host (pairing).
 
 ## What this family is
 
@@ -106,6 +106,7 @@ Editing `wasm-src/` without rebuilding and re-recording fails CI.
 | `telegram/` | `telegram` | 15 linked-account tools + channel (`[channel.ingress]` webhook, message `[channel.reply]`, message `[channel.delivery]`; device-link requirement on tools, deployment credentials via `[admin_configuration]`) | `telegram` (device_link) | first_party | crate `ironclaw_telegram_extension` |
 | `web-app/` | `web-app` | channel only (host-owned `authenticated_session` ingress + stream `[channel.reply]` whose sink composition binds — the product projection sink — + push `[channel.delivery]`; the package binds delivery only, VAPID auto-seeded under `[admin_configuration]`) | — | first_party | crate `ironclaw_web_app_extension` |
 | `web-access/` | `web-access` | 2 tools | — | first_party | data-only (executor: `extension_support::web_access`) |
+| `whatsapp/` | — (not installable yet) | none yet (no manifest) | — | — | standalone Node sidecar service in `sidecar/` (its own Docker image, outside the Cargo workspace); the extension crate comes later |
 
 Data-only packages ship through the `PACKAGES` inventory in
 `crates/extensions/ironclaw_extension_support/src/packages/mod.rs` (a module per

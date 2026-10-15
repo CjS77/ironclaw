@@ -108,11 +108,13 @@ against the documented tree (PROPOSAL §5); on 2026-10-04 it reports:
 documented exclusion(s), 0 owned exception(s))` (re-derived after adding the
 Jev tool classifier package).
 
-Under `crates/extensions/packages/`, 16 package directories: 6 are workspace
+Under `crates/extensions/packages/`, 17 package directories: 6 are workspace
 crates (`slack`, `telegram`, `web-app`, `memory-native`, `mem0`,
-`tool-selection-jev` — the last is a loop-port provider with no manifest) and 10 are data-only
+`tool-selection-jev` — the last is a loop-port provider with no manifest), 10 are data-only
 (manifest + prompts/schemas, some with prebuilt WASM): github, gmail, the
-five google-*, nearai-mcp, notion-mcp, web-access. Every package directory —
+five google-*, nearai-mcp, notion-mcp, web-access, and `whatsapp` so far holds
+only a standalone Node sidecar service (`whatsapp/sidecar/`, built as its own
+Docker image, outside the Cargo workspace) and no crate or manifest yet. Every package directory —
 data-only ones included — carries its own `README.md`, so the read order
 above applies at package level too: `crates/extensions/AGENTS.md` →
 `crates/extensions/packages/<pkg>/README.md`.
