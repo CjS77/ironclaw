@@ -9,6 +9,9 @@ in `.naomi-version`. Entries are added by the `/naomi-bump` skill.
 
 ## [Unreleased]
 
+### Added
+- Network policies can now name specific targets that may reach private-network addresses (RFC 1918, loopback, IPv6 unique-local, carrier-grade NAT) while private ranges are otherwise denied. Link-local addresses (including the cloud metadata endpoint), multicast, unspecified, broadcast and documentation addresses stay blocked even for those targets. Nothing uses this yet, and existing policies behave as before
+
 ### Changed
 - The WebUI file browser now uses the agent's own folder names: its top level is labelled "Root" (was "workspace"), and the area the agent calls `/workspace` is labelled "Workspace" (was "Home"), so `/workspace/media` shows as Root › Workspace › media and `/memory` as Root › Memory. All locales are updated; URLs and routes are unchanged. Root folders are still sorted by name, so in English "Memory" is now listed above "Workspace"
 - The chat "Working" indicator is now an animated picture of Naomi typing (`naomi-typing-50px.webp`, shown at 28px) instead of the animated NEAR "N" logo. Finished runs ("Worked for …") show the picture's still first frame, as does the working indicator when the browser asks for reduced motion
