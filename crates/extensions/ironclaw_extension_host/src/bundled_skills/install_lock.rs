@@ -799,9 +799,10 @@ impl BundledSkillInstallLock {
                         tracing::debug!(lock = %self.path, "bundled skill install lock was already gone at release");
                         Ok(())
                     }
+                    // Either another starter took the lock over, or a renewal that was dropped
+                    // in flight still landed and moved the version on; the nonce tells which.
                     Err(FilesystemError::VersionMismatch { .. }) => {
-                        self.log_left_for_successor();
-                        Ok(())
+                        self.delete_current_version_if_mine(filesystem).await
                     }
                     // A backend without versioned deletes: compare the nonce instead.
                     Err(FilesystemError::Unsupported { .. }) => {
@@ -828,6 +829,37 @@ impl BundledSkillInstallLock {
             .as_ref()
             .and_then(|entry| InstallLockHolder::decode(&entry.entry.body))
             .is_some_and(|holder| holder.nonce == self.holder.nonce))
+    }
+
+    /// Deletes the entry at whatever version it now has, if it still carries this holder's
+    /// nonce. The delete is still conditional on that version, so a successor that takes over
+    /// between the read and the delete keeps its lock.
+    async fn delete_current_version_if_mine(
+        &self,
+        filesystem: &dyn RootFilesystem,
+    ) -> Result<(), RebornBuildError> {
+        let current = filesystem
+            .get(&self.path)
+            .await
+            .map_err(|error| lock_io_error(&self.path, "read", error))?;
+        let Some(current) = current.filter(|entry| {
+            InstallLockHolder::decode(&entry.entry.body)
+                .is_some_and(|holder| holder.nonce == self.holder.nonce)
+        }) else {
+            self.log_left_for_successor();
+            return Ok(());
+        };
+        match filesystem
+            .delete_if_version(&self.path, current.version)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(FilesystemError::NotFound { .. } | FilesystemError::VersionMismatch { .. }) => {
+                self.log_left_for_successor();
+                Ok(())
+            }
+            Err(error) => Err(lock_io_error(&self.path, "release", error)),
+        }
     }
 
     async fn delete_if_nonce_matches(

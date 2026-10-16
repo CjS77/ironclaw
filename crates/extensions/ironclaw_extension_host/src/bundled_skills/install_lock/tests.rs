@@ -824,6 +824,38 @@ lock_scenarios! {
             backend.name
         );
     }
+
+    /// A renewal still in flight when the install finishes is dropped, but its write may land
+    /// anyway, leaving the entry at a version the lock never recorded. The entry is still this
+    /// holder's, so release must remove it.
+    async fn release_removes_the_entry_after_a_renewal_it_never_saw_land(backend) {
+        let filesystem = backend.filesystem.as_ref();
+        let lock = BundledSkillInstallLock::acquire(
+            filesystem,
+            &skills_root(),
+            None,
+            &InstallLockPolicy::default(),
+        )
+        .await
+        .expect("acquire");
+        let mine = filesystem
+            .get(&lock_path())
+            .await
+            .expect("read lock")
+            .expect("lock entry present");
+        filesystem
+            .put(&lock_path(), mine.entry.clone(), CasExpectation::Version(mine.version))
+            .await
+            .expect("the dropped renewal's write lands");
+
+        lock.release(filesystem).await.expect("release");
+
+        assert!(
+            lock_body(filesystem).await.is_none(),
+            "{}: release left this holder's own entry behind",
+            backend.name
+        );
+    }
 }
 
 /// A test double over a real backend: counts calls, can fail every write, and can hold back
