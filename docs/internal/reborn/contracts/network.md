@@ -96,7 +96,25 @@ Some deployments need one named endpoint on the local network, such as a sidecar
 - With `deny_private_ip_ranges` off, the field has no effect. Targets that are not exempt are treated exactly as before.
 - An exemption by host name trusts whatever that name resolves to: whoever controls its DNS answer chooses which private address is reached (the always-blocked class still applies). Exempt a name only when the deployment controls its resolution, or exempt an IP literal.
 
-No production policy sets this field yet. The sandbox managed-egress proxy cannot honour an exemption and rejects a policy that carries one.
+One production path sets this field: channel egress to an operator-configured endpoint (§3.2). The sandbox managed-egress proxy cannot honour an exemption and rejects a policy that carries one.
+
+### 3.2 Operator-configured channel endpoints
+
+A `[[channel.egress]]` target may name an `endpoint` instead of a literal `host`, for a service whose address only the deployment knows (a sidecar on a private network). The operator binds it in `config.toml`:
+
+```toml
+[channel_endpoints.<extension_id>.<endpoint_id>]
+url = "http://relay:8080"        # http(s)://host[:port], path empty or "/"
+allow_private_network = true     # default false
+allow_insecure_http = true       # default false; http requires both flags
+```
+
+- Only a first-party or system manifest may name an endpoint (`ironclaw_extension_registry` v3 validation); the manifest-source check already stops other sources from requesting that trust, so a third-party package cannot inherit a binding by reusing an extension id. Operator URLs must name a host name or IPv4 address (IPv6 literals are refused), and a trailing dot counts as part of the reserved domain.
+- `config.toml` is the only source. No tenant-admin, user, or WebUI setting can create or change a binding, so nothing below the operator can point an extension at an address inside the operator's network.
+- Adapters address the target at its logical URL, `https://<endpoint_id>.channel-endpoint.invalid/<path>`. `PolicyEnforcedChannelEgress` (`crates/extensions/ironclaw_extension_host/src/egress.rs`) runs every literal-target check on that URL first: no adapter-supplied port, userinfo, fragment, or encoded traversal; method, path, prefix, credential, and body rules as declared. Only then does it rewrite the origin to the operator's `scheme://host[:port]`, keeping path and query bytes (so a path placeholder survives for host-side injection). An undeclared endpoint, a malformed name in the reserved domain, or a declared endpoint the operator did not bind is denied before any transport activity.
+- The transport (`channel_egress.rs`) pins the policy to the operator's exact scheme, host, and port, with `deny_private_ip_ranges` on. It adds that one target to `private_network_targets` only when the binding has `allow_private_network = true`. Literal manifest hosts never carry the exemption.
+- Activation of an installed extension whose manifest names an unbound endpoint fails with `BindError::EndpointNotConfigured`. A deployment-bound channel still binds, and every send to the unbound endpoint is denied.
+- Credentials keep the host runtime's rule: they attach only over `https` or to a literal loopback host. A credentialed `http` endpoint addressed by name is refused at injection.
 
 HTTP egress rejects URL userinfo before policy, DNS, or transport so credentials cannot be smuggled through an allowlisted host URL. It resolves hostnames before dispatch and denies the request before transport when `deny_private_ip_ranges` is true and any resolved address is private, loopback, link-local, documentation, multicast, broadcast, unspecified, carrier-grade NAT, unique-local, or an IPv4-mapped IPv6 address that maps to a non-public IPv4 address. The default transport disables its own redirect handling; `PolicyNetworkHttpEgress` follows redirects instead, re-running URL validation, policy authorization, and private-IP DNS denial for every hop and carrying no caller header across a hop. The transport pins the request to the vetted resolved address set so a later DNS answer cannot silently change the destination for that request, while still allowing connector-level fallback across alternate A/AAAA answers. Caller-provided `Host` headers are rejected before transport so virtual-host routing cannot diverge from the URL host that policy validated. Runtime-visible response bodies are always bounded: omitted and oversized explicit `response_body_limit` values clamp to the V1 default in-memory cap rather than reading unbounded data.
 
@@ -172,6 +190,7 @@ The crate tests cover:
 - estimated egress limit denial
 - missing egress estimate denial when a limit is configured
 - literal non-public IP denial
+- operator channel endpoints (`ironclaw_extension_host` egress and lifecycle tests, `tests/integration/operator_channel_endpoints.rs`): logical URLs are rewritten onto the operator origin after every policy check; adapter-supplied authority on a logical URL, undeclared and unbound endpoints are denied before transport; only opted-in endpoints carry the exemption; activation fails closed on an unbound endpoint; a real request reaches a loopback listener with the injected credential only when the opt-in is on
 - private-network exemption: exempt literals and exempt hostnames may reach RFC 1918, loopback, unique-local and carrier-grade NAT addresses; always-blocked addresses stay denied for exempt targets; non-exempt targets (including mixed public and private answers) stay denied; a policy carrying a wildcard exemption is refused with a typed error; the exemption needs a matching allow entry and matching scheme/port; redirects from an exempt host to a non-exempt private target are denied
 - IPv4-mapped IPv6 private address denial
 - hostname resolution to non-public IP denial before transport
