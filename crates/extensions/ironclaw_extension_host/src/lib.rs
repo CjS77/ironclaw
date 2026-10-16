@@ -32,6 +32,7 @@ pub mod channel_delivery;
 pub mod channel_dm_provisioning;
 pub mod channel_dm_targets;
 pub mod channel_egress;
+pub mod channel_endpoints;
 pub mod channel_host;
 pub mod channel_identity;
 pub mod channel_identity_binding;

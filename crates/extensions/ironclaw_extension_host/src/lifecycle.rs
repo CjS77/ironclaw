@@ -104,6 +104,18 @@ pub trait EgressFactory: Send + Sync {
         installation_id: &str,
         declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
     ) -> Arc<dyn RestrictedEgress>;
+
+    /// The first operator-configured endpoint `declared` names that has no
+    /// operator binding for `extension_id`. Activation refuses such an
+    /// extension. The default treats every endpoint as unconfigured, so a
+    /// factory that knows no bindings fails closed.
+    fn unconfigured_endpoint(
+        &self,
+        _extension_id: &str,
+        declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
+    ) -> Option<ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId> {
+        declared.iter().find_map(|target| target.endpoint.clone())
+    }
 }
 
 /// Dependencies `ExtensionHost` is constructed with. Every port is generic;
@@ -520,7 +532,7 @@ impl ExtensionHost {
                 let label = vendor_call_label(wiring, recipe);
                 let result = crate::channel_vendor_calls::run_vendor_call(
                     recipe,
-                    &target.host,
+                    &crate::channel_endpoints::request_host(target),
                     target.credential_handle.as_ref(),
                     &record.config,
                     egress.as_ref(),
@@ -644,6 +656,14 @@ impl ExtensionHost {
             linked_accounts: self.deps.linked_accounts.resolver_for(&resolved),
         })?;
         check_binding(&resolved, &bindings)?;
+        if let Some(channel) = &resolved.channel
+            && let Some(endpoint) = self
+                .deps
+                .egress
+                .unconfigured_endpoint(&record.extension_id, &channel.egress)
+        {
+            return Err(BindError::EndpointNotConfigured { endpoint }.into());
+        }
         for tool in &resolved.tools {
             if self.deps.reserved_capability_ids.contains(&tool.id) {
                 return Err(LifecycleError::Conflict(

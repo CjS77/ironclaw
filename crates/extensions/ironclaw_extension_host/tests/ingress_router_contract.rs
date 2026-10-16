@@ -523,7 +523,7 @@ async fn harness(options: HarnessOptions) -> Harness {
             inbound_batches: options
                 .inbound_batches
                 .unwrap_or_else(test_inbound_batch_store),
-            channel_egress_transport: None,
+            channel_egress: None,
         },
         options.config,
     );
@@ -1732,6 +1732,12 @@ async fn attachment_authority_stays_on_the_parsed_generation_during_snapshot_upg
     let transport = Arc::new(GenerationTransport::default());
     let transport_port: Arc<dyn ironclaw_extension_host::egress::ChannelEgressTransport> =
         transport.clone();
+    let channel_egress = Arc::new(
+        ironclaw_extension_host::egress::TransportBackedEgressFactory::new(
+            transport_port,
+            Arc::new(ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints::new()),
+        ),
+    );
     let host = Arc::new(
         ExtensionHost::new(ExtensionHostDeps {
             store: Arc::clone(&store) as Arc<dyn InstallationRecordStore>,
@@ -1739,11 +1745,8 @@ async fn attachment_authority_stays_on_the_parsed_generation_during_snapshot_upg
                 adapters: std::sync::Mutex::new([old_adapter, new_adapter].into_iter().collect()),
             }),
             drain: Arc::new(ironclaw_extension_host::test_support::RecordingDrain::default()),
-            egress: Arc::new(
-                ironclaw_extension_host::egress::TransportBackedEgressFactory::new(Arc::clone(
-                    &transport_port,
-                )),
-            ),
+            egress: Arc::clone(&channel_egress)
+                as Arc<dyn ironclaw_extension_host::lifecycle::EgressFactory>,
             reserved_capability_ids: Default::default(),
             reserved_ingress_routes: Default::default(),
             hook_deadline: Duration::from_secs(5),
@@ -1793,7 +1796,7 @@ async fn attachment_authority_stays_on_the_parsed_generation_during_snapshot_upg
             sink: sink.clone(),
             reply_context: Arc::new(TestReplyContextStore::default()),
             inbound_batches: test_inbound_batch_store(),
-            channel_egress_transport: Some(Arc::clone(&transport_port)),
+            channel_egress: Some(Arc::clone(&channel_egress)),
         },
         IngressRouterConfig {
             request_deadline: Duration::from_secs(30),

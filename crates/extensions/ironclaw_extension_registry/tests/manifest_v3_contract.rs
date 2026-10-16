@@ -1778,3 +1778,162 @@ fn legacy_resolved_record_without_standard_op_rehydrates_to_none() {
     assert_eq!(rehydrated_descriptor.standard_op, None);
     assert_eq!(rehydrated_descriptor.id, descriptor.id);
 }
+
+// ---------------------------------------------------------------------------
+// Resolved-manifest digest pins
+// ---------------------------------------------------------------------------
+
+/// Every shipped manifest that declares egress (channel `[[channel.egress]]`
+/// targets or tool `network_targets`/credential audiences), plus the acme
+/// fixture (by package directory name), paired with the digest of its
+/// serialized resolved record.
+///
+/// The resolved record is what installations persist and what the host reads
+/// instead of re-parsing TOML, so a schema change that alters it changes what
+/// every existing installation means. Adding an optional field to the egress
+/// vocabulary must leave these bytes exactly as they were; a changed digest
+/// here is a persisted-compatibility change that needs its own review, never
+/// a value to re-capture in passing.
+const RESOLVED_MANIFEST_DIGEST_PINS: &[(&str, &str)] = &[
+    (
+        "acme-messenger",
+        "sha256:62f757dbff6befc4242a5f7430cea029f7bf3a0c86c28fcb914c54d5d0ba3e17",
+    ),
+    (
+        "slack",
+        "sha256:52c3250c14300a8b738c44c0b6e1b252243db42a87b07d8241fe1dbf18d7f7d4",
+    ),
+    (
+        "telegram",
+        "sha256:088d9496dce7c4446451691e00d4baa33beb190c21a5a9b1f1f317611dac1fe2",
+    ),
+    (
+        "web-app",
+        "sha256:92ec1498591dcc995d8b55d126603e6b399976520775070b8a678c08dd0b576a",
+    ),
+    (
+        "gmail",
+        "sha256:b97a5ed8eecb2f3af1e1d5deecc1d44325e7fbf467e180cd6b1af4164b936ccf",
+    ),
+    (
+        "google-calendar",
+        "sha256:1ece80f748016dc5ecaf3999c97e9f7e4643e148ef8f086a95e4bf3dc7d739be",
+    ),
+    (
+        "web-access",
+        "sha256:fe3628265b3847a4dc060104a47163630b6845fc2c286b734c6592c330e784fe",
+    ),
+    (
+        "github",
+        "sha256:f8b155bae41571daa74dd1e2f92f2d058b2a3e93ab299a6a560b4812559280ea",
+    ),
+];
+
+#[test]
+fn shipped_manifest_resolved_records_are_byte_stable() {
+    let mut drift = Vec::new();
+    for (name, pinned) in RESOLVED_MANIFEST_DIGEST_PINS {
+        // Read at run time rather than `include_str!`: several of these
+        // packages are crates of their own, and compiling their trees into
+        // this one is the reach-in `reborn_cross_crate_include_scan` forbids.
+        let toml = if *name == "acme-messenger" {
+            ACME_MANIFEST.to_string()
+        } else {
+            let path = format!(
+                "{}/../packages/{name}/manifest.toml",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path}: {error}"))
+        };
+        let record = parse_v3(&toml).unwrap_or_else(|error| panic!("{name} must parse: {error}"));
+        let bytes = serde_json::to_vec(record.resolved()).expect("resolved record serializes");
+        let digest = ironclaw_host_api::approval::sha256_digest_token(&bytes);
+        if digest != *pinned {
+            drift.push(format!("{name}: pinned {pinned}, measured {digest}"));
+        }
+    }
+    assert!(
+        drift.is_empty(),
+        "a shipped manifest's resolved record changed:\n{}",
+        drift.join("\n")
+    );
+}
+
+#[test]
+fn an_endpoint_egress_target_parses_and_resolves_without_a_host_and_bad_shapes_fail() {
+    let record = parse_v3(include_str!(
+        "../../../../tests/fixtures/extensions/acme-inbox/manifest.toml"
+    ))
+    .expect("the acme-inbox fixture parses through the single entry point");
+    let channel = record
+        .resolved()
+        .channel
+        .as_ref()
+        .expect("acme-inbox declares a channel");
+    let target = &channel.egress[0];
+    assert_eq!(
+        target.endpoint.as_ref().map(|endpoint| endpoint.as_str()),
+        Some("relay")
+    );
+    assert!(target.host.is_empty());
+
+    let both = include_str!("../../../../tests/fixtures/extensions/acme-inbox/manifest.toml")
+        .replace(
+            "endpoint = \"relay\"",
+            "endpoint = \"relay\"\nhost = \"relay.example\"",
+        );
+    let error = parse_v3(&both).expect_err("a target naming a host and an endpoint fails closed");
+    assert!(error.contains("both a host"), "{error}");
+
+    // The operator binding alone decides the real scheme.
+    let http = include_str!("../../../../tests/fixtures/extensions/acme-inbox/manifest.toml")
+        .replace(
+            "endpoint = \"relay\"",
+            "endpoint = \"relay\"\nscheme = \"http\"",
+        );
+    let error = parse_v3(&http).expect_err("an endpoint target with a non-https scheme fails");
+    assert!(error.contains("default https scheme"), "{error}");
+
+    // A literal host may not pose as a logical endpoint address, with or
+    // without a trailing dot, in any case.
+    for reserved in [
+        "relay.channel-endpoint.invalid",
+        "relay.channel-endpoint.invalid.",
+        "Relay.Channel-Endpoint.Invalid",
+    ] {
+        let literal =
+            include_str!("../../../../tests/fixtures/extensions/acme-inbox/manifest.toml")
+                .replace("endpoint = \"relay\"", &format!("host = \"{reserved}\""));
+        let error = parse_v3(&literal).expect_err("a reserved-domain literal host fails");
+        assert!(error.contains("reserved"), "{reserved}: {error}");
+    }
+
+    // Only a first-party manifest may name an endpoint: a binding can reach
+    // the operator's private network.
+    let third_party = r#"
+schema_version = "reborn.extension_manifest.v3"
+id = "acme-outsider"
+name = "Acme Outsider"
+version = "0.1.0"
+description = "third-party channel naming an endpoint"
+trust = "third_party"
+
+[runtime]
+kind = "wasm"
+module = "wasm/acme_outsider.wasm"
+
+[channel]
+id = "inbox"
+display_name = "Outsider inbox"
+conversation_model = "continuous"
+
+[channel.delivery]
+transport = "message"
+
+[[channel.egress]]
+endpoint = "relay"
+methods = ["post"]
+"#;
+    let error = parse_v3(third_party).expect_err("a third-party endpoint target fails closed");
+    assert!(error.contains("restricted to first-party"), "{error}");
+}

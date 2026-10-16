@@ -732,9 +732,7 @@ pub fn build_extension_ingress(
     deployment_channels: Arc<ironclaw_extension_host::DeploymentChannelRegistry>,
     reply_context: Arc<dyn ironclaw_extension_host::ingress::ReplyContextStore>,
     inbound_batches: Arc<dyn ironclaw_extension_host::inbound_batches::InboundBatchStore>,
-    channel_egress_transport: Option<
-        Arc<dyn ironclaw_extension_host::egress::ChannelEgressTransport>,
-    >,
+    channel_egress: Option<Arc<ironclaw_extension_host::egress::TransportBackedEgressFactory>>,
 ) -> ExtensionIngressParts {
     let registry = Arc::new(ExtensionIngressRegistry::default());
     let router = Arc::new(
@@ -746,7 +744,7 @@ pub fn build_extension_ingress(
                 sink: Arc::clone(&registry) as Arc<dyn InboundSink>,
                 reply_context: Arc::clone(&reply_context),
                 inbound_batches,
-                channel_egress_transport,
+                channel_egress,
             },
             ironclaw_extension_host::ingress::IngressRouterConfig::default(),
         )

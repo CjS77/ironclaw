@@ -14,15 +14,17 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId;
 use ironclaw_extension_contracts::tool_adapter::{
     RestrictedEgress, RestrictedEgressError, RestrictedEgressRequest, RestrictedEgressResponse,
 };
 use ironclaw_host_api::{
-    action::{NetworkMethod, NetworkScheme},
+    action::{NetworkMethod, NetworkScheme, NetworkTargetPattern},
     http::RuntimeCredentialTarget,
     ids::SecretHandle,
 };
 
+use crate::channel_endpoints::{OperatorChannelEndpoints, PrivateNetworkPosture};
 use crate::lifecycle::EgressFactory;
 
 /// Default response-body cap for channel vendor calls without an explicit
@@ -50,7 +52,10 @@ const HOST_OWNED_HEADERS: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct DeclaredChannelEgress {
     pub scheme: NetworkScheme,
+    /// The literal host; empty for an endpoint target.
     pub host: String,
+    /// The operator-configured endpoint this target names instead of a host.
+    pub endpoint: Option<ChannelEgressEndpointId>,
     pub methods: Vec<NetworkMethod>,
     pub credential_handle: Option<SecretHandle>,
     pub injection: Option<RuntimeCredentialTarget>,
@@ -87,8 +92,8 @@ pub struct ApprovedChannelEgress {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    /// The single host the transport must pin its network policy to.
-    pub host: String,
+    /// The single network target the transport must pin its policy to.
+    pub target: PinnedEgressTarget,
     pub credential: Option<ApprovedChannelCredential>,
     /// Declared body credentials this call opted into: handle plus its
     /// manifest-declared `BodyJsonPointer` target. Resolution and insertion
@@ -100,6 +105,32 @@ pub struct ApprovedChannelEgress {
     pub request_body_limit: Option<u64>,
     pub response_body_limit: u64,
     pub timeout_ms: u64,
+}
+
+/// The one network target an approved call may reach, and whether that target
+/// may resolve into a private network.
+///
+/// A literal manifest host pins `https`, any port the URL did not name, and
+/// private ranges denied. An operator endpoint pins the operator's exact
+/// scheme and port, and carries the private-network opt-in only when the
+/// operator gave it for that endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedEgressTarget {
+    pub pattern: NetworkTargetPattern,
+    pub private_network: PrivateNetworkPosture,
+}
+
+impl PinnedEgressTarget {
+    fn literal(host: String) -> Self {
+        Self {
+            pattern: NetworkTargetPattern {
+                scheme: Some(NetworkScheme::Https),
+                host_pattern: host,
+                port: None,
+            },
+            private_network: PrivateNetworkPosture::Denied,
+        }
+    }
 }
 
 /// Executes approved plans. Implemented by composition over the host runtime
@@ -118,6 +149,7 @@ pub struct PolicyEnforcedChannelEgress {
     installation_id: String,
     declared: Vec<DeclaredChannelEgress>,
     transport: Arc<dyn ChannelEgressTransport>,
+    endpoints: Arc<OperatorChannelEndpoints>,
 }
 
 impl PolicyEnforcedChannelEgress {
@@ -126,12 +158,14 @@ impl PolicyEnforcedChannelEgress {
         installation_id: impl Into<String>,
         declared: Vec<DeclaredChannelEgress>,
         transport: Arc<dyn ChannelEgressTransport>,
+        endpoints: Arc<OperatorChannelEndpoints>,
     ) -> Self {
         Self {
             extension_id: extension_id.into(),
             installation_id: installation_id.into(),
             declared,
             transport,
+            endpoints,
         }
     }
 
@@ -152,10 +186,21 @@ impl PolicyEnforcedChannelEgress {
             .ok_or(RestrictedEgressError::PolicyDenied)?
             .to_ascii_lowercase();
         let request_path = url.path();
+        // A host in the reserved logical domain addresses an endpoint target
+        // and nothing else; a malformed one is refused, never read as literal.
+        let endpoint = match crate::channel_endpoints::endpoint_for_logical_host(&host) {
+            None => None,
+            Some(Ok(endpoint)) => Some(endpoint),
+            Some(Err(_)) => return Err(RestrictedEgressError::UndeclaredHost { host }),
+        };
         let same_host: Vec<&DeclaredChannelEgress> = self
             .declared
             .iter()
-            .filter(|target| target.scheme == scheme && target.host.eq_ignore_ascii_case(&host))
+            .filter(|target| match (&endpoint, &target.endpoint) {
+                (Some(requested), Some(declared)) => requested == declared,
+                (None, None) => target.scheme == scheme && target.host.eq_ignore_ascii_case(&host),
+                _ => false,
+            })
             .collect();
         if same_host.is_empty() {
             return Err(RestrictedEgressError::UndeclaredHost { host });
@@ -233,14 +278,34 @@ impl PolicyEnforcedChannelEgress {
         {
             return Err(RestrictedEgressError::PolicyDenied);
         }
+        // Every check above ran on the URL the adapter wrote. Only now does an
+        // endpoint target move onto the operator's origin — and only if the
+        // operator bound one for this extension.
+        let (url, target) = match &declared.endpoint {
+            None => (request.url, PinnedEgressTarget::literal(host)),
+            Some(endpoint_id) => {
+                let operator = self
+                    .endpoints
+                    .get(&self.extension_id, endpoint_id)
+                    .ok_or(RestrictedEgressError::PolicyDenied)?;
+                let rewritten = operator
+                    .rewrite(&request.url, &host)
+                    .ok_or(RestrictedEgressError::PolicyDenied)?;
+                let target = PinnedEgressTarget {
+                    pattern: operator.network_target(),
+                    private_network: operator.private_network(),
+                };
+                (rewritten, target)
+            }
+        };
         Ok(ApprovedChannelEgress {
             extension_id: self.extension_id.clone(),
             installation_id: self.installation_id.clone(),
             method: request.method,
-            url: request.url,
+            url,
             headers: request.headers,
             body,
-            host,
+            target,
             credential,
             body_credentials,
             request_body_limit: declared.request_body_limit_bytes,
@@ -335,6 +400,7 @@ impl DeclaredChannelEgress {
         Self {
             scheme: descriptor.scheme,
             host: descriptor.host.clone(),
+            endpoint: descriptor.endpoint.clone(),
             methods: descriptor.methods.clone(),
             credential_handle: descriptor.credential_handle.clone(),
             injection: descriptor.injection.clone(),
@@ -355,15 +421,46 @@ fn normalized_declared_path(path: &str) -> String {
 
 /// The production [`EgressFactory`]: builds a policy-enforced egress from the
 /// declaration the lifecycle passes (staged or active) over one injected
-/// transport. An extension with no declared egress gets a policy that rejects
-/// every host — fail-closed, never a panic.
+/// transport and the operator's endpoint bindings. An extension with no
+/// declared egress gets a policy that rejects every host — fail-closed, never
+/// a panic.
+///
+/// The ingress router and the delivery resolver build their per-call egress
+/// through [`Self::policy_for_channel`] too, so every channel egress in the
+/// process reads the same endpoint bindings.
 pub struct TransportBackedEgressFactory {
     transport: Arc<dyn ChannelEgressTransport>,
+    endpoints: Arc<OperatorChannelEndpoints>,
 }
 
 impl TransportBackedEgressFactory {
-    pub fn new(transport: Arc<dyn ChannelEgressTransport>) -> Self {
-        Self { transport }
+    pub fn new(
+        transport: Arc<dyn ChannelEgressTransport>,
+        endpoints: Arc<OperatorChannelEndpoints>,
+    ) -> Self {
+        Self {
+            transport,
+            endpoints,
+        }
+    }
+
+    /// The concrete policy egress for one channel's declared targets.
+    pub fn policy_for_channel(
+        &self,
+        extension_id: &str,
+        installation_id: &str,
+        declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
+    ) -> PolicyEnforcedChannelEgress {
+        PolicyEnforcedChannelEgress::new(
+            extension_id,
+            installation_id,
+            declared
+                .iter()
+                .map(DeclaredChannelEgress::from_descriptor)
+                .collect(),
+            Arc::clone(&self.transport),
+            Arc::clone(&self.endpoints),
+        )
     }
 }
 
@@ -374,21 +471,25 @@ impl EgressFactory for TransportBackedEgressFactory {
         installation_id: &str,
         declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
     ) -> Arc<dyn RestrictedEgress> {
-        Arc::new(PolicyEnforcedChannelEgress::new(
-            extension_id,
-            installation_id,
-            declared
-                .iter()
-                .map(DeclaredChannelEgress::from_descriptor)
-                .collect(),
-            Arc::clone(&self.transport),
-        ))
+        Arc::new(self.policy_for_channel(extension_id, installation_id, declared))
+    }
+
+    fn unconfigured_endpoint(
+        &self,
+        extension_id: &str,
+        declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
+    ) -> Option<ChannelEgressEndpointId> {
+        self.endpoints
+            .first_unconfigured(extension_id, declared)
+            .cloned()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel_endpoints::{InsecureHttpPosture, OperatorChannelEndpoint};
+    use ironclaw_host_api::ids::ExtensionId;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -415,6 +516,7 @@ mod tests {
         vec![DeclaredChannelEgress {
             scheme: NetworkScheme::Https,
             host: "vendor.example".to_string(),
+            endpoint: None,
             methods: vec![NetworkMethod::Post],
             credential_handle: Some(SecretHandle::new("vendor_bot_token").unwrap()),
             injection: None,
@@ -436,6 +538,7 @@ mod tests {
                 "inst-1",
                 declared,
                 transport.clone() as Arc<dyn ChannelEgressTransport>,
+                Arc::new(OperatorChannelEndpoints::new()),
             ),
             transport,
         )
@@ -519,7 +622,11 @@ mod tests {
             .unwrap();
         let approved = transport.approved.lock().unwrap();
         assert_eq!(approved.len(), 1);
-        assert_eq!(approved[0].host, "vendor.example");
+        assert_eq!(approved[0].target.pattern.host_pattern, "vendor.example");
+        assert_eq!(
+            approved[0].target.private_network,
+            PrivateNetworkPosture::Denied
+        );
         assert_eq!(approved[0].extension_id, "vendorx");
         let credential = approved[0].credential.as_ref().unwrap();
         assert!(matches!(
@@ -659,6 +766,7 @@ mod tests {
             "inst-1",
             declared_vendor(),
             Arc::new(HugeTransport),
+            Arc::new(OperatorChannelEndpoints::new()),
         );
         let error = egress
             .send(post("https://vendor.example/api/x"))
@@ -816,5 +924,260 @@ mod tests {
             .expect("a genuine sub-path of the declared prefix is allowed");
 
         assert_eq!(transport.approved.lock().unwrap().len(), 1);
+    }
+
+    // ---- operator-configured endpoint targets --------------------------------
+
+    const LOGICAL: &str = "https://relay.channel-endpoint.invalid";
+
+    fn relay_id() -> ChannelEgressEndpointId {
+        ChannelEgressEndpointId::new("relay").unwrap()
+    }
+
+    fn declared_relay() -> DeclaredChannelEgress {
+        let mut target = declared_vendor().remove(0);
+        target.host = String::new();
+        target.endpoint = Some(relay_id());
+        target.paths = vec!["/v1/messages".to_string()];
+        target
+    }
+
+    fn operator_endpoints(raw: &str, private: PrivateNetworkPosture) -> OperatorChannelEndpoints {
+        let insecure = if raw.starts_with("http://") {
+            InsecureHttpPosture::Allowed
+        } else {
+            InsecureHttpPosture::Denied
+        };
+        let mut endpoints = OperatorChannelEndpoints::new();
+        endpoints
+            .insert(
+                ExtensionId::new("vendorx").unwrap(),
+                relay_id(),
+                OperatorChannelEndpoint::parse(raw, private, insecure).unwrap(),
+            )
+            .unwrap();
+        endpoints
+    }
+
+    fn egress_with_endpoints(
+        declared: Vec<DeclaredChannelEgress>,
+        endpoints: OperatorChannelEndpoints,
+    ) -> (PolicyEnforcedChannelEgress, Arc<RecordingTransport>) {
+        let transport = Arc::new(RecordingTransport::default());
+        (
+            PolicyEnforcedChannelEgress::new(
+                "vendorx",
+                "inst-1",
+                declared,
+                transport.clone() as Arc<dyn ChannelEgressTransport>,
+                Arc::new(endpoints),
+            ),
+            transport,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_logical_endpoint_url_is_rewritten_onto_the_operator_origin() {
+        let (egress, transport) = egress_with_endpoints(
+            vec![declared_relay()],
+            operator_endpoints("http://127.0.0.1:8080", PrivateNetworkPosture::Allowed),
+        );
+        egress
+            .send(post(&format!("{LOGICAL}/v1/messages?trace=1")))
+            .await
+            .expect("a declared, configured endpoint target is approved");
+        let approved = transport.approved.lock().unwrap();
+        assert_eq!(approved.len(), 1);
+        assert_eq!(approved[0].url, "http://127.0.0.1:8080/v1/messages?trace=1");
+        assert_eq!(
+            approved[0].target,
+            PinnedEgressTarget {
+                pattern: NetworkTargetPattern {
+                    scheme: Some(NetworkScheme::Http),
+                    host_pattern: "127.0.0.1".to_string(),
+                    port: Some(8080),
+                },
+                private_network: PrivateNetworkPosture::Allowed,
+            }
+        );
+        assert!(
+            approved[0].credential.is_some(),
+            "the declared credential still rides the endpoint target"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_https_endpoint_without_the_opt_in_keeps_private_ranges_denied() {
+        let (egress, transport) = egress_with_endpoints(
+            vec![declared_relay()],
+            operator_endpoints("https://relay.internal:8443", PrivateNetworkPosture::Denied),
+        );
+        egress
+            .send(post(&format!("{LOGICAL}/v1/messages")))
+            .await
+            .expect("approved; the transport enforces the private-range denial");
+        let approved = transport.approved.lock().unwrap();
+        assert_eq!(approved[0].url, "https://relay.internal:8443/v1/messages");
+        assert_eq!(
+            approved[0].target.private_network,
+            PrivateNetworkPosture::Denied
+        );
+    }
+
+    #[tokio::test]
+    async fn undeclared_unconfigured_and_malformed_endpoints_are_denied_before_transport() {
+        // Declared, but the operator bound nothing for it.
+        let (egress, transport) =
+            egress_with_endpoints(vec![declared_relay()], OperatorChannelEndpoints::new());
+        let error = egress
+            .send(post(&format!("{LOGICAL}/v1/messages")))
+            .await
+            .expect_err("an unconfigured endpoint is denied");
+        assert!(
+            matches!(error, RestrictedEgressError::PolicyDenied),
+            "{error:?}"
+        );
+        assert!(transport.approved.lock().unwrap().is_empty());
+
+        let (egress, transport) = egress_with_endpoints(
+            vec![declared_relay()],
+            operator_endpoints("https://relay.internal", PrivateNetworkPosture::Denied),
+        );
+        for url in [
+            // An endpoint the manifest never declared.
+            "https://other.channel-endpoint.invalid/v1/messages",
+            // Malformed labels in the reserved domain never fall back to literal.
+            "https://channel-endpoint.invalid/v1/messages",
+            "https://a.relay.channel-endpoint.invalid/v1/messages",
+        ] {
+            let error = egress.send(post(url)).await.expect_err(url);
+            assert!(
+                matches!(error, RestrictedEgressError::UndeclaredHost { .. }),
+                "{url}: {error:?}"
+            );
+        }
+        // The operator's real address is not itself a declared host.
+        let error = egress
+            .send(post("https://relay.internal/v1/messages"))
+            .await
+            .expect_err("the resolved origin is not addressable directly");
+        assert!(matches!(
+            error,
+            RestrictedEgressError::UndeclaredHost { .. }
+        ));
+        assert!(transport.approved.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn adapter_supplied_authority_on_a_logical_url_is_denied() {
+        let (egress, transport) = egress_with_endpoints(
+            vec![declared_relay()],
+            operator_endpoints("http://127.0.0.1:8080", PrivateNetworkPosture::Allowed),
+        );
+        for url in [
+            "https://relay.channel-endpoint.invalid:8080/v1/messages",
+            "https://user@relay.channel-endpoint.invalid/v1/messages",
+            "https://relay.channel-endpoint.invalid/v1/messages#frag",
+            "https://relay.channel-endpoint.invalid/v1/%2e%2e%2fmessages",
+            // The logical scheme is always https; the operator decides the real one.
+            "http://relay.channel-endpoint.invalid/v1/messages",
+        ] {
+            let error = egress.send(post(url)).await.expect_err(url);
+            assert!(
+                matches!(error, RestrictedEgressError::PolicyDenied),
+                "{url}: {error:?}"
+            );
+        }
+        assert!(transport.approved.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn method_and_path_rules_apply_to_endpoint_targets() {
+        let (egress, transport) = egress_with_endpoints(
+            vec![declared_relay()],
+            operator_endpoints("http://127.0.0.1:8080", PrivateNetworkPosture::Allowed),
+        );
+        let error = egress
+            .send(post(&format!("{LOGICAL}/v1/admin")))
+            .await
+            .expect_err("an undeclared path is denied");
+        assert!(matches!(error, RestrictedEgressError::PolicyDenied));
+        let mut get = post(&format!("{LOGICAL}/v1/messages"));
+        get.method = NetworkMethod::Get;
+        let error = egress.send(get).await.expect_err("an undeclared method");
+        assert!(matches!(error, RestrictedEgressError::UndeclaredMethod));
+        let mut stolen = post(&format!("{LOGICAL}/v1/messages"));
+        stolen.credential = Some(SecretHandle::new("some_other_secret").unwrap());
+        let error = egress
+            .send(stolen)
+            .await
+            .expect_err("undeclared credential");
+        assert!(matches!(
+            error,
+            RestrictedEgressError::UndeclaredCredential { .. }
+        ));
+        assert!(transport.approved.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_literal_host_target_never_gets_the_private_network_exemption() {
+        // The operator bound `relay` to a private address with the opt-in, and
+        // a literal target names that very host: the literal target still
+        // pins https, no port, and private ranges denied.
+        let mut literal = declared_vendor().remove(0);
+        literal.host = "127.0.0.1".to_string();
+        let (egress, transport) = egress_with_endpoints(
+            vec![literal, declared_relay()],
+            operator_endpoints("http://127.0.0.1:8080", PrivateNetworkPosture::Allowed),
+        );
+        egress
+            .send(post("https://127.0.0.1/api/x"))
+            .await
+            .expect("literal targets are approved as before");
+        let approved = transport.approved.lock().unwrap();
+        assert_eq!(approved[0].url, "https://127.0.0.1/api/x");
+        assert_eq!(
+            approved[0].target,
+            PinnedEgressTarget {
+                pattern: NetworkTargetPattern {
+                    scheme: Some(NetworkScheme::Https),
+                    host_pattern: "127.0.0.1".to_string(),
+                    port: None,
+                },
+                private_network: PrivateNetworkPosture::Denied,
+            }
+        );
+    }
+
+    #[test]
+    fn the_factory_reports_the_first_unconfigured_endpoint_for_activation() {
+        let descriptor: ironclaw_extension_contracts::channel::ChannelEgressDescriptor =
+            serde_json::from_value(serde_json::json!({
+                "endpoint": "relay",
+                "methods": ["post"],
+            }))
+            .unwrap();
+        let declared = vec![descriptor];
+        let unconfigured = TransportBackedEgressFactory::new(
+            Arc::new(RecordingTransport::default()),
+            Arc::new(OperatorChannelEndpoints::new()),
+        );
+        assert_eq!(
+            unconfigured.unconfigured_endpoint("vendorx", &declared),
+            Some(relay_id())
+        );
+        let configured = TransportBackedEgressFactory::new(
+            Arc::new(RecordingTransport::default()),
+            Arc::new(operator_endpoints(
+                "https://relay.internal",
+                PrivateNetworkPosture::Denied,
+            )),
+        );
+        assert_eq!(configured.unconfigured_endpoint("vendorx", &declared), None);
+        assert_eq!(
+            configured.unconfigured_endpoint("another-extension", &declared),
+            Some(relay_id()),
+            "a binding belongs to one extension"
+        );
     }
 }

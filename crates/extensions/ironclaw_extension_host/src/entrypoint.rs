@@ -136,6 +136,16 @@ pub enum BindError {
     /// The loader could not construct the entrypoint.
     #[error("extension could not be loaded: {reason}")]
     Load { reason: String },
+    /// A `[[channel.egress]]` target names an operator endpoint the operator
+    /// never bound under `[channel_endpoints.<extension>.<endpoint>]`. The
+    /// channel could not reach it, so activation refuses rather than publish
+    /// a surface whose every send would be denied.
+    #[error(
+        "egress endpoint `{endpoint}` is not configured; bind it under [channel_endpoints] in config.toml"
+    )]
+    EndpointNotConfigured {
+        endpoint: ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId,
+    },
     /// A hosted-MCP declaration bound only its host-internal connection
     /// template. Activation is not useful until discovery publishes at least
     /// one callable tool from the server's effective contract.

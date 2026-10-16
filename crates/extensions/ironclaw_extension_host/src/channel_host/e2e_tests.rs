@@ -716,13 +716,13 @@ async fn build_harness_with_options(options: HarnessOptions) -> Harness {
         // transport) — channel-context hydration (#7377) fetches through it
         // at admission time. The same recording transport serves the
         // delivery side below.
-        Some(Arc::new(egress.clone()) as Arc<dyn ChannelEgressTransport>),
+        Some(Arc::new(recording_egress_factory(&egress))),
     );
     let delivery_coordinator = Arc::new(DeliveryCoordinator::new(
         Arc::clone(&outbound_store),
         Arc::new(SnapshotChannelDeliveryResolver::new(
             host.snapshot_watch(),
-            Arc::new(egress.clone()),
+            Arc::new(recording_egress_factory(&egress)),
         )),
         Arc::new(IngressReplyContextSource::new(Arc::clone(
             &ingress.reply_context,
@@ -1485,7 +1485,7 @@ async fn background_run_notifier_fixture(
         outbound_store,
         Arc::new(SnapshotChannelDeliveryResolver::new(
             host.snapshot_watch(),
-            Arc::new(driver_egress.clone()),
+            Arc::new(recording_egress_factory(&driver_egress)),
         )),
         Arc::new(NoReplyContext),
         Arc::new(ironclaw_assistant::NoDeliveryRegistrations),
@@ -4942,6 +4942,17 @@ impl ironclaw_product_contracts::surface::ProductSurface for RecordingCommandExe
     > {
         Err(ironclaw_product_contracts::surface::ProductSurfaceError::internal())
     }
+}
+
+/// The production egress factory over the recording transport, with no
+/// operator endpoint bindings (these suites use literal-host manifests only).
+fn recording_egress_factory(
+    egress: &RecordingEgress,
+) -> ironclaw_extension_host::egress::TransportBackedEgressFactory {
+    ironclaw_extension_host::egress::TransportBackedEgressFactory::new(
+        Arc::new(egress.clone()) as Arc<dyn ChannelEgressTransport>,
+        Arc::new(ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints::new()),
+    )
 }
 
 #[derive(Clone, Default)]

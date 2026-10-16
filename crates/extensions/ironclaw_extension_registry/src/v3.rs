@@ -35,6 +35,7 @@ use ironclaw_host_api::{
 
 use ironclaw_extension_contracts::{
     channel::{ChannelDescriptor, ChannelDescriptorError},
+    channel_endpoint::CHANNEL_ENDPOINT_LOGICAL_HOST_SUFFIX,
     memory::{MemoryDescriptor, MemoryScheduledOpKind},
     recipe::{RecipeValidationError, VendorAuthRecipe},
 };
@@ -433,6 +434,8 @@ pub(crate) fn parse_v3(
     }
     if let Some(channel) = &raw.channel {
         validate_channel_admin_configuration(channel, raw.admin_configuration.as_ref())?;
+        validate_channel_egress_addresses(channel)?;
+        validate_channel_endpoint_trust(channel, raw.trust)?;
     }
 
     // Normalize tools (or the synthesized MCP connection template) into the
@@ -843,6 +846,69 @@ fn validate_memory_scheduled_ops(
         }
     }
     Ok(())
+}
+
+/// Each `[[channel.egress]]` target names exactly one of a literal host or an
+/// operator-configured endpoint. An endpoint target keeps the default `https`
+/// scheme, because the operator binding alone decides the real one. A literal
+/// host may not sit under the reserved logical domain (with or without a
+/// trailing dot), so it cannot pose as an endpoint address.
+fn validate_channel_egress_addresses(channel: &ChannelDescriptor) -> Result<(), ManifestV3Error> {
+    for target in &channel.egress {
+        let host = target.host.trim();
+        let reason = match &target.endpoint {
+            Some(endpoint) if !host.is_empty() => format!(
+                "[[channel.egress]] target names both a host (`{host}`) and an endpoint \
+                 (`{endpoint}`); declare exactly one"
+            ),
+            Some(endpoint) if target.scheme != NetworkScheme::Https => format!(
+                "[[channel.egress]] endpoint `{endpoint}` must keep the default https scheme; \
+                 the operator binding decides the real one"
+            ),
+            None if host
+                .to_ascii_lowercase()
+                .trim_end_matches('.')
+                .ends_with(CHANNEL_ENDPOINT_LOGICAL_HOST_SUFFIX) =>
+            {
+                format!(
+                    "[[channel.egress]] host `{host}` is under the reserved \
+                     `{CHANNEL_ENDPOINT_LOGICAL_HOST_SUFFIX}` domain; name an endpoint instead"
+                )
+            }
+            _ => continue,
+        };
+        return Err(ManifestV3Error::Invalid { reason });
+    }
+    Ok(())
+}
+
+/// An egress `endpoint` reaches whatever the operator bound for this
+/// extension id, possibly on the operator's private network, so only a
+/// manifest whose requested trust is first-party or system may name one.
+/// Requested trust is a sound gate here: the source check above already
+/// refuses that request from any manifest source that may not claim it.
+fn validate_channel_endpoint_trust(
+    channel: &ChannelDescriptor,
+    trust: RequestedTrustClass,
+) -> Result<(), ManifestV3Error> {
+    let first_party = matches!(
+        trust,
+        RequestedTrustClass::FirstPartyRequested | RequestedTrustClass::SystemRequested
+    );
+    match channel
+        .egress
+        .iter()
+        .find_map(|target| target.endpoint.as_ref())
+    {
+        Some(endpoint) if !first_party => Err(ManifestV3Error::Invalid {
+            reason: format!(
+                "[[channel.egress]] endpoint `{endpoint}` reaches an operator-configured \
+                 address, so it is restricted to first-party manifests; trust `{trust:?}` may \
+                 not declare one"
+            ),
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Validate every channel runtime reference against the one manifest-owned

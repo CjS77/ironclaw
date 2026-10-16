@@ -12,9 +12,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ironclaw_extension_contracts::tool_adapter::{RestrictedEgressError, RestrictedEgressResponse};
-use ironclaw_extension_host::egress::{ApprovedChannelEgress, ChannelEgressTransport};
+use ironclaw_extension_host::channel_endpoints::PrivateNetworkPosture;
+use ironclaw_extension_host::egress::{
+    ApprovedChannelEgress, ChannelEgressTransport, PinnedEgressTarget,
+};
 use ironclaw_host_api::{
-    action::{NetworkPolicy, NetworkScheme, NetworkTargetPattern},
+    action::NetworkPolicy,
     http::{RuntimeHttpEgressReasonCode, RuntimeHttpEgressRequest},
     ids::{CapabilityId, ExtensionId, InvocationId, SecretHandle},
     resource::ResourceScope,
@@ -311,16 +314,7 @@ impl ChannelEgressTransport for HostRuntimeChannelEgressTransport {
                     url: approved.url,
                     headers: approved.headers,
                     body: approved.body,
-                    network_policy: NetworkPolicy {
-                        allowed_targets: vec![NetworkTargetPattern {
-                            scheme: Some(NetworkScheme::Https),
-                            host_pattern: approved.host,
-                            port: None,
-                        }],
-                        deny_private_ip_ranges: true,
-                        max_egress_bytes: None,
-                        private_network_targets: Vec::new(),
-                    },
+                    network_policy: pinned_network_policy(approved.target),
                     credential_injections: Vec::new(),
                     response_body_limit: Some(approved.response_body_limit),
                     save_body_to: None,
@@ -336,6 +330,23 @@ impl ChannelEgressTransport for HostRuntimeChannelEgressTransport {
             status: response.status,
             body: response.body,
         })
+    }
+}
+
+/// The network policy for one approved call: exactly its pinned target, with
+/// private-IP denial on. The private-network exemption names that same one
+/// target, and only when the operator opted the endpoint in — a literal
+/// manifest host never carries it.
+fn pinned_network_policy(target: PinnedEgressTarget) -> NetworkPolicy {
+    let private_network_targets = match target.private_network {
+        PrivateNetworkPosture::Allowed => vec![target.pattern.clone()],
+        PrivateNetworkPosture::Denied => Vec::new(),
+    };
+    NetworkPolicy {
+        allowed_targets: vec![target.pattern],
+        deny_private_ip_ranges: true,
+        max_egress_bytes: None,
+        private_network_targets,
     }
 }
 
@@ -539,7 +550,14 @@ mod tests {
             url: url.to_string(),
             headers: vec![("content-type".to_string(), "application/json".to_string())],
             body: b"{}".to_vec(),
-            host: host.to_string(),
+            target: PinnedEgressTarget {
+                pattern: ironclaw_host_api::action::NetworkTargetPattern {
+                    scheme: Some(ironclaw_host_api::action::NetworkScheme::Https),
+                    host_pattern: host.to_string(),
+                    port: None,
+                },
+                private_network: PrivateNetworkPosture::Denied,
+            },
             credential,
             body_credentials: Vec::new(),
             request_body_limit: None,
@@ -592,7 +610,60 @@ mod tests {
             recorded[0].policy.allowed_targets[0].host_pattern,
             "vendor.example"
         );
+        assert!(
+            recorded[0].policy.private_network_targets.is_empty(),
+            "a literal manifest host never carries the private-network exemption"
+        );
         assert_eq!(recorded[0].response_body_limit, Some(64 * 1024));
+    }
+
+    /// An operator endpoint pins its own scheme and port, and the recorded
+    /// policy names that one target as private-network exempt only when the
+    /// operator opted the endpoint in. Private-IP denial stays on in both.
+    #[tokio::test]
+    async fn the_pinned_policy_carries_the_exemption_only_for_opted_in_endpoints() {
+        use ironclaw_host_api::action::{NetworkScheme, NetworkTargetPattern};
+
+        let operator_target = NetworkTargetPattern {
+            scheme: Some(NetworkScheme::Http),
+            host_pattern: "127.0.0.1".to_string(),
+            port: Some(8080),
+        };
+        for (posture, expected_exempt) in [
+            (
+                PrivateNetworkPosture::Allowed,
+                vec![operator_target.clone()],
+            ),
+            (PrivateNetworkPosture::Denied, Vec::new()),
+        ] {
+            let scope = test_scope();
+            let (port, requests) = host_egress_port(RecordingNetworkHttpEgress::ok());
+            let credentials = seeded_credentials(
+                &scope,
+                &SecretHandle::new("vendor_bot_token").unwrap(),
+                "unused",
+            )
+            .await;
+            let transport = HostRuntimeChannelEgressTransport::new(port, credentials, scope);
+            let mut plan = approved("http://127.0.0.1:8080/v1/messages", "unused", None);
+            plan.target = PinnedEgressTarget {
+                pattern: operator_target.clone(),
+                private_network: posture,
+            };
+            transport.execute(plan).await.expect("transport executes");
+
+            let recorded = requests.lock().unwrap();
+            assert_eq!(recorded[0].url, "http://127.0.0.1:8080/v1/messages");
+            assert_eq!(
+                recorded[0].policy.allowed_targets,
+                vec![operator_target.clone()]
+            );
+            assert!(recorded[0].policy.deny_private_ip_ranges);
+            assert_eq!(
+                recorded[0].policy.private_network_targets, expected_exempt,
+                "{posture:?}"
+            );
+        }
     }
 
     #[tokio::test]

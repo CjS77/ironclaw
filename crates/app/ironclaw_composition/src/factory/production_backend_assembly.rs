@@ -355,6 +355,7 @@ pub(super) async fn build_backend_production(
         session_reply_channel: input_session_reply_channel,
         start_reply_publication_at_build,
         first_party_bundles,
+        operator_channel_endpoints,
         first_party_registrars,
         credential_account_visibility_policy,
         ironhub_manifest_url,
@@ -1286,6 +1287,7 @@ pub(super) async fn build_backend_production(
                     as Arc<dyn ironclaw_outbound::OutboundStateStorePort>,
                 linked_sessions: Some(Arc::clone(&linked_sessions)),
                 linked_accounts: Some(linked_accounts),
+                operator_channel_endpoints,
             })
             .await?;
         let pairing_installation_store = Arc::clone(&backend_extension_host.installation_store);

@@ -291,6 +291,10 @@ pub struct DeploymentConfig {
         Option<ironclaw_operator::llm_admin::nearai_mcp::NearAiMcpBootstrapConfig>,
     pub(crate) account_setup_descriptors: Vec<ExtensionAccountSetupDescriptor>,
     pub(crate) first_party_bundles: Vec<ironclaw_extension_host::FirstPartyPackageBundle>,
+    /// Operator-bound egress endpoints from `config.toml` `[channel_endpoints]`.
+    /// Empty by default: no extension can reach an endpoint target.
+    pub(crate) operator_channel_endpoints:
+        std::sync::Arc<ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints>,
 }
 
 impl DeploymentConfig {
@@ -321,6 +325,7 @@ impl DeploymentConfig {
             nearai_mcp_bootstrap_config: None,
             account_setup_descriptors: Vec::new(),
             first_party_bundles: Vec::new(),
+            operator_channel_endpoints: Default::default(),
         }
     }
 
@@ -359,6 +364,7 @@ impl DeploymentConfig {
             nearai_mcp_bootstrap_config: None,
             account_setup_descriptors: Vec::new(),
             first_party_bundles: Vec::new(),
+            operator_channel_endpoints: Default::default(),
         }
     }
 
@@ -418,6 +424,7 @@ impl DeploymentConfig {
             nearai_mcp_bootstrap_config: None,
             account_setup_descriptors: Vec::new(),
             first_party_bundles: Vec::new(),
+            operator_channel_endpoints: Default::default(),
         }
     }
 
@@ -507,6 +514,7 @@ impl DeploymentConfig {
             nearai_mcp_bootstrap_config: None,
             account_setup_descriptors: Vec::new(),
             first_party_bundles: Vec::new(),
+            operator_channel_endpoints: Default::default(),
         }
     }
 
@@ -889,6 +897,35 @@ mod tests {
             .resolve()
             .expect("resolves")
             .expect("config makes a policy request")
+    }
+
+    #[test]
+    fn operator_channel_endpoints_default_empty_and_ride_the_deployment() {
+        use ironclaw_extension_host::channel_endpoints::{
+            InsecureHttpPosture, OperatorChannelEndpoint, OperatorChannelEndpoints,
+            PrivateNetworkPosture,
+        };
+        let bindings = local_filesystem_build_input("owner", PathBuf::from("unused-root"));
+        assert!(bindings.deployment().operator_channel_endpoints.is_empty());
+
+        let mut endpoints = OperatorChannelEndpoints::new();
+        endpoints
+            .insert(
+                ironclaw_host_api::ids::ExtensionId::new("acme-inbox").unwrap(),
+                ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId::new(
+                    "relay",
+                )
+                .unwrap(),
+                OperatorChannelEndpoint::parse(
+                    "https://relay.internal",
+                    PrivateNetworkPosture::Denied,
+                    InsecureHttpPosture::Denied,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let bindings = bindings.with_operator_channel_endpoints(endpoints.clone());
+        assert_eq!(*bindings.deployment().operator_channel_endpoints, endpoints);
     }
 
     #[test]

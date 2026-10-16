@@ -1,0 +1,40 @@
+# Invented-vendor fixture for operator-configured egress endpoints.
+#
+# A delivery-only channel whose one egress target names an endpoint instead of
+# a literal host: the service it talks to (a relay the operator runs) has no
+# address the package author can know. The operator binds `relay` under
+# `[channel_endpoints.acme-inbox.relay]` in config.toml; adapters address it
+# at `https://relay.channel-endpoint.invalid/...` and the host rewrites the
+# origin. Used by the generic endpoint suites only — no product names it.
+schema_version = "reborn.extension_manifest.v3"
+id = "acme-inbox"
+name = "Acme Inbox"
+version = "0.1.0"
+description = "Invented-vendor fixture: a delivery channel whose egress target is an operator-configured endpoint."
+trust = "first_party_requested"
+
+[admin_configuration]
+group_id = "vendor.acme-inbox"
+display_name = "Acme Inbox relay"
+description = "Credentials for the Acme Inbox relay."
+fields = [
+  { handle = "acme_inbox_relay_token", label = "Relay token", secret = true, required = true },
+]
+
+[runtime]
+kind = "first_party"
+service = "acme-inbox.extension/v1"
+
+[channel]
+id = "inbox"
+display_name = "Acme inbox"
+conversation_model = "continuous"
+
+[channel.delivery]
+transport = "message"
+
+[[channel.egress]]
+endpoint = "relay"
+methods = ["post"]
+credential_handle = "acme_inbox_relay_token"
+paths = ["/v1/messages"]

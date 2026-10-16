@@ -21,7 +21,7 @@ packages depend on product.
 
 ## Public surface
 
-21 shipped modules (`src/lib.rs` is the source of truth; the module-by-module
+22 shipped modules (`src/lib.rs` is the source of truth; the module-by-module
 charter table lives in [`AGENTS.md`](./AGENTS.md)). The load-bearing entries:
 
 - `channel_adapter` — `ChannelIngress` and `ChannelDelivery` (the reply half is `reply::ReplySink`)

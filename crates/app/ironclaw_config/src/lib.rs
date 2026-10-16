@@ -24,6 +24,7 @@
 mod boot;
 mod budget;
 mod capability_remediation;
+mod channel_endpoints;
 mod config_file;
 mod config_seed;
 mod doctor;
@@ -43,6 +44,7 @@ pub use capability_remediation::{
     HostRemediationText, apply_step_text, google_backend_auth_text, google_not_configured_text,
     google_remediation_text, google_setup_steps_text,
 };
+pub use channel_endpoints::{ChannelEndpointEntry, ChannelEndpointsSection};
 pub use config_file::{
     BootSection, BudgetSection, DefaultLlmSlotUpdate, DefaultLlmSlotUpdateSession, DriversSection,
     GoogleFieldUpdate, GoogleOauthConfigUpdate, GoogleOauthConfigUpdateSession, GoogleSection,
