@@ -15,7 +15,7 @@ use ironclaw_product_contracts::delivery::{
     ResolvedChannelDelivery,
 };
 
-use crate::egress::{ChannelEgressTransport, DeclaredChannelEgress, PolicyEnforcedChannelEgress};
+use crate::egress::TransportBackedEgressFactory;
 use crate::ingress::{ReplyContextKey, ReplyContextStore};
 use crate::{DeploymentChannelRegistry, SnapshotWatch};
 
@@ -26,15 +26,15 @@ use crate::{DeploymentChannelRegistry, SnapshotWatch};
 pub struct SnapshotChannelDeliveryResolver {
     watch: SnapshotWatch,
     deployment_channels: Arc<DeploymentChannelRegistry>,
-    transport: Arc<dyn ChannelEgressTransport>,
+    egress: Arc<TransportBackedEgressFactory>,
 }
 
 impl SnapshotChannelDeliveryResolver {
-    pub fn new(watch: SnapshotWatch, transport: Arc<dyn ChannelEgressTransport>) -> Self {
+    pub fn new(watch: SnapshotWatch, egress: Arc<TransportBackedEgressFactory>) -> Self {
         Self {
             watch,
             deployment_channels: Arc::new(DeploymentChannelRegistry::default()),
-            transport,
+            egress,
         }
     }
 
@@ -76,24 +76,12 @@ fn delivery_identity(
 impl ChannelDeliveryResolver for SnapshotChannelDeliveryResolver {
     fn resolve_channel_delivery(&self, extension_id: &str) -> Option<ResolvedChannelDelivery> {
         if let Some(extension) = self.deployment_channels.extension(extension_id) {
-            let declared: Vec<DeclaredChannelEgress> = extension
-                .resolved
-                .channel
-                .as_ref()
-                .map(|channel| {
-                    channel
-                        .egress
-                        .iter()
-                        .map(DeclaredChannelEgress::from_descriptor)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let declared_egress_hosts = declared.iter().map(|egress| egress.host.clone()).collect();
-            let egress = Arc::new(PolicyEnforcedChannelEgress::new(
-                extension.extension_id.clone(),
-                extension.extension_id.clone(),
+            let declared = declared_egress(&extension.resolved);
+            let declared_egress_hosts = literal_egress_hosts(declared);
+            let egress = Arc::new(self.egress.policy_for_channel(
+                &extension.extension_id,
+                &extension.extension_id,
                 declared,
-                Arc::clone(&self.transport),
             ));
             // A deployment-bound channel has no installation record, so its
             // extension id *is* its installation id. With distinct newtypes
@@ -128,24 +116,12 @@ impl ChannelDeliveryResolver for SnapshotChannelDeliveryResolver {
         let snapshot = self.watch.current();
         let extension = snapshot.extension(extension_id)?;
         let surfaces = extension.channel.clone();
-        let declared: Vec<DeclaredChannelEgress> = extension
-            .resolved
-            .channel
-            .as_ref()
-            .map(|channel| {
-                channel
-                    .egress
-                    .iter()
-                    .map(DeclaredChannelEgress::from_descriptor)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let declared_egress_hosts = declared.iter().map(|egress| egress.host.clone()).collect();
-        let egress = Arc::new(PolicyEnforcedChannelEgress::new(
-            extension.extension_id.clone(),
-            extension.installation_id.clone(),
+        let declared = declared_egress(&extension.resolved);
+        let declared_egress_hosts = literal_egress_hosts(declared);
+        let egress = Arc::new(self.egress.policy_for_channel(
+            &extension.extension_id,
+            &extension.installation_id,
             declared,
-            Arc::clone(&self.transport),
         ));
         let (extension_id, installation_id) =
             delivery_identity(&extension.extension_id, &extension.installation_id)?;
@@ -171,6 +147,29 @@ impl ChannelDeliveryResolver for SnapshotChannelDeliveryResolver {
             generation: snapshot.generation().0,
         })
     }
+}
+
+fn declared_egress(
+    resolved: &ironclaw_extension_registry::ResolvedExtensionManifest,
+) -> &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor] {
+    resolved
+        .channel
+        .as_ref()
+        .map(|channel| channel.egress.as_slice())
+        .unwrap_or_default()
+}
+
+/// The hosts a user-supplied enrollment endpoint may be checked against.
+/// Literal manifest hosts only: an operator endpoint's address belongs to the
+/// operator's network and is never something a user may enroll.
+fn literal_egress_hosts(
+    declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
+) -> Vec<String> {
+    declared
+        .iter()
+        .filter(|target| target.endpoint.is_none())
+        .map(|target| target.host.clone())
+        .collect()
 }
 
 /// The delivery-time read half of the ingress router's `reply_context`

@@ -27,6 +27,13 @@ reason to be its own compilation unit.
 - `RebornConfigFile` + the `config.toml` schema (`config_file.rs`,
   `deny_unknown_fields`), seeding (`config_seed.rs`), `RebornDoctorReport`
   (`doctor.rs`), budget env defaults (`budget.rs`).
+- `ChannelEndpointsSection` / `ChannelEndpointEntry` (`channel_endpoints.rs`)
+  — `[channel_endpoints.<extension_id>.<endpoint_id>]`, the operator's
+  bindings for extension egress endpoints (`url`, `allow_private_network`,
+  `allow_insecure_http`, both flags default `false`; `http` needs both).
+  Shape-checked at parse time and run through the inline-secret guard; the
+  binary maps them into the extension host's typed bindings. This file is the
+  only place an endpoint can be bound.
 - `reject_inline_secret` / `InlineSecretError` (`secrets_guard.rs`) — the
   fail-closed refusal of raw secret values typed into the file, at any depth.
 - `RetiredSections` / `retired_config_key_guidance` (`retired_sections.rs`) —

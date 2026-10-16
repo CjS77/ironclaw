@@ -88,6 +88,10 @@ pub(crate) struct BackendExtensionHostAssemblyInput {
     /// adapter call (design §8).
     pub(crate) delivery_registrations:
         Arc<dyn ironclaw_product_contracts::delivery::DeliveryRegistrationService>,
+    /// The operator's `[channel_endpoints]` bindings, shared by every channel
+    /// egress the host builds (lifecycle, ingress, delivery).
+    pub(crate) operator_channel_endpoints:
+        Arc<ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints>,
 }
 
 pub(crate) struct BackendExtensionHostAssembly {
@@ -121,6 +125,7 @@ pub(crate) async fn build_backend_extension_host(
         outbound_state,
         linked_sessions,
         linked_accounts,
+        operator_channel_endpoints,
     } = input;
 
     let channel_egress_credentials = Arc::new(
@@ -137,14 +142,17 @@ pub(crate) async fn build_backend_extension_host(
     #[cfg(feature = "test-support")]
     let channel_egress_credential_bridges = Arc::clone(&channel_egress_credentials);
 
-    let channel_egress_transport = host_runtime_http_egress.map(|port| {
-        Arc::new(
-            ironclaw_extension_host::channel_egress::HostRuntimeChannelEgressTransport::new(
-                port,
-                channel_egress_credentials,
-                channel_egress_scope.clone(),
-            ),
-        ) as Arc<dyn ironclaw_extension_host::egress::ChannelEgressTransport>
+    let channel_egress = host_runtime_http_egress.map(|port| {
+        use ironclaw_extension_host::{channel_egress, egress};
+        let transport = channel_egress::HostRuntimeChannelEgressTransport::new(
+            port,
+            channel_egress_credentials,
+            channel_egress_scope.clone(),
+        );
+        Arc::new(egress::TransportBackedEgressFactory::new(
+            Arc::new(transport),
+            operator_channel_endpoints,
+        ))
     });
     let boot_installations = ironclaw_extension_host::boot_installation_records(
         &installation_store,
@@ -170,7 +178,7 @@ pub(crate) async fn build_backend_extension_host(
                 ironclaw_extension_host::extension_ingress::reserved_fixed_ingress_routes(),
                 std::time::Duration::from_secs(30),
             ),
-            channel_egress_transport: channel_egress_transport.clone(),
+            channel_egress: channel_egress.clone(),
             // A deployment without product auth composes no custody; the
             // fail-closed shapes are chosen here, at the boundary, so the
             // host's own dependency struct stays honest about what
@@ -203,9 +211,9 @@ pub(crate) async fn build_backend_extension_host(
                 reason: format!("inbound batch store could not be configured: {error}"),
             })?,
         ),
-        channel_egress_transport.clone(),
+        channel_egress.clone(),
     );
-    let (delivery_coordinator, channel_delivery_resolver) = match channel_egress_transport {
+    let (delivery_coordinator, channel_delivery_resolver) = match channel_egress {
         Some(transport) => {
             let resolver: Arc<dyn ChannelDeliveryResolver> = Arc::new(
                 ironclaw_extension_host::SnapshotChannelDeliveryResolver::new(

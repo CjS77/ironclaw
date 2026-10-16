@@ -92,7 +92,7 @@ assertions) and `tests/e2e/AGENTS.md` (pytest fixtures, Playwright, mock LLM).
 | Memory & workspace | 11 | 2 | — | ✓ |
 | Skills | 1 | 1 | — | ✓ |
 | Multi-user / scope isolation | 5 | 4 | 9 | ✓ |
-| Tools & tool dispatch | — | 11 | ✓ | ✓ |
+| Tools & tool dispatch | — | 12 | ✓ | ✓ |
 | Turn lifecycle (cancel/steer/retry/restart) | — | 8 | ✓ | ✓ |
 | WebUI surfaces & APIs | 2 | 2 | — | ✓ (largest) |
 | Durability & restart | 4 | 6 | ✓ | ✓ |
@@ -100,7 +100,7 @@ assertions) and `tests/e2e/AGENTS.md` (pytest fixtures, Playwright, mock LLM).
 | Providers (Google/Slack/GitHub contracts) | — | — | ✓ | ✓ |
 | Coverage/meta gates | — | 2 | ✓ | ✓ |
 
-Totals: **62** group scenarios · **63** flat integration bins (56 in
+Totals: **62** group scenarios · **64** flat integration bins (57 in
 `tests/integration/`, 7 in `tests/integration/auth/`) · **39** top-level Rust bins ·
 **103** Python scenario files (**889** test functions) registered in the active
 Reborn coverage map below. Section 6 separately inventories retained and legacy
@@ -222,7 +222,7 @@ ones speak MTProto over a raw socket with no injectable seam.
 
 ---
 
-## 4. Flat integration bins — `tests/integration/*.rs` and `tests/integration/auth/*.rs` (63)
+## 4. Flat integration bins — `tests/integration/*.rs` and `tests/integration/auth/*.rs` (64)
 
 One thread, whole real turn. Grouped by what the user experiences.
 
@@ -280,6 +280,7 @@ One thread, whole real turn. Grouped by what the user experiences.
 | User-registered and bundled hosted MCP servers register, authenticate, project active, restore, and invoke | `hosted_mcp_registration.rs` |
 | Web search/fetch runs the real Exa MCP handshake | `web_access.rs` |
 | Outbound HTTP crosses the real security pipeline (network policy + leak scan) | `real_egress_pipeline.rs` |
+| A channel whose egress names an operator-configured endpoint reaches the operator's private address (a loopback listener) with its credential only when the operator opted that endpoint into private-network reach; without the opt-in, or with no binding at all, nothing leaves the host. A new bin because `real_egress_pipeline.rs` drives `builtin.http` turns over a recording transport, and this needs a real listener under the channel delivery resolver | `operator_channel_endpoints.rs` |
 | Tools marked host-internal are never advertised to the model, and calls to them are rejected | `extension_visibility.rs`, `surface_disclosure.rs` |
 | Ordinary authentication vocabulary in verified and locally imported tool descriptions survives prompt construction without denying the turn | `extension_visibility.rs::prompt_description_auth_vocabulary_survives_at_the_real_turn_seam` |
 | With a large tool catalog, progressive-disclosure modes and the `namespaces` production default expose `tool_search`, `tool_describe`, and `tool_call` instead of flat tools; a complete search signature invokes directly, while incomplete or explicitly inspected results fall back through `tool_describe` | `tool_disclosure.rs` |
@@ -346,7 +347,7 @@ One thread, whole real turn. Grouped by what the user experiences.
 | A canonical 10-tool-call agent turn's database write volume is measured and reported (for tracking, not gated) on both libSQL and Postgres, and custom-actor group threads are rejected from canonical durable milestones | `db_write_canonical.rs` |
 | A downloaded run artifact carries per-iteration model-call timing evidence for a completed run, and still carries durable per-message timestamps (with an explicit `run_not_resident` reason) when the process-local timing buffer was evicted or the process restarted | `run_artifact_timings.rs` |
 
-One of the 63 registered bins, `delivery_user_journeys.rs`, holds the explicit
+One of the 64 registered bins, `delivery_user_journeys.rs`, holds the explicit
 channel-delivery journeys (two-lane model):
 
 | A user can… | Scenario |

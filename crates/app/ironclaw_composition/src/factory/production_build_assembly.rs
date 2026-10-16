@@ -36,6 +36,7 @@ pub(super) async fn build_production_shaped(
     let nearai_mcp_bootstrap_config = deployment.nearai_mcp_bootstrap_config.clone();
     let process_concurrency_limits = deployment.process_concurrency_limits.clone();
     let first_party_bundles = deployment.first_party_bundles.clone();
+    let operator_channel_endpoints = Arc::clone(&deployment.operator_channel_endpoints);
     let traffic_policy = deployment.traffic();
     // Scope an implicit mem0 app id to the standalone storage root.
     let resolved_memory_provider = {
@@ -88,6 +89,7 @@ pub(super) async fn build_production_shaped(
         session_reply_channel,
         start_reply_publication_at_build,
         first_party_bundles,
+        operator_channel_endpoints,
         first_party_registrars,
         credential_account_visibility_policy,
         ironhub_manifest_url,
@@ -403,6 +405,8 @@ pub(super) struct RebornProductionBuildContext {
     pub(super) session_reply_channel: Option<ironclaw_host_api::ids::ExtensionId>,
     pub(super) start_reply_publication_at_build: bool,
     pub(super) first_party_bundles: Vec<ironclaw_extension_host::FirstPartyPackageBundle>,
+    pub(super) operator_channel_endpoints:
+        Arc<ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints>,
     pub(super) first_party_registrars:
         Vec<Arc<dyn ironclaw_extension_host::FirstPartyHandlerRegistrar>>,
     pub(super) credential_account_visibility_policy:

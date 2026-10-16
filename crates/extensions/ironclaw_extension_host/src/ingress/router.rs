@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 
 use crate::active::ActiveExtension;
 use crate::deployment_channels::{DeploymentChannelBinding, DeploymentChannelRegistry};
-use crate::egress::{ChannelEgressTransport, DeclaredChannelEgress, PolicyEnforcedChannelEgress};
+use crate::egress::TransportBackedEgressFactory;
 use crate::inbound_batches::{
     ClaimedInboundBatch, InboundBatchKey, InboundBatchSchedule, InboundBatchStageOutcome,
     InboundBatchStageRequest, InboundBatchStore,
@@ -240,12 +240,13 @@ pub struct ExtensionIngressRouterDeps {
     /// Host-private durable staging for provider-level batches whose
     /// fragments arrive as separate webhook requests.
     pub inbound_batches: Arc<dyn InboundBatchStore>,
-    /// Host transport used only to construct per-request manifest-restricted
-    /// egress from the already pinned ingress binding.
+    /// Host egress (transport plus operator endpoint bindings) used only to
+    /// construct per-request manifest-restricted egress from the already
+    /// pinned ingress binding.
     // arch-exempt: optional_arc, minimal/test host-runtime graphs intentionally
     // omit HTTP egress; absence preserves the explicit fail-closed 503 path for
     // attachment-bearing messages, plan #4539
-    pub channel_egress_transport: Option<Arc<dyn ChannelEgressTransport>>,
+    pub channel_egress: Option<Arc<TransportBackedEgressFactory>>,
 }
 
 /// The generic ingress router. One instance serves every active extension's
@@ -567,27 +568,16 @@ impl ExtensionIngressRouter {
         binding: &ResolvedIngressBinding,
         installation_id: &str,
     ) -> Arc<dyn RestrictedEgress> {
-        let Some(transport) = self.deps.channel_egress_transport.as_ref() else {
+        let Some(egress) = self.deps.channel_egress.as_ref() else {
             return Arc::new(UnavailableRestrictedEgress);
         };
         let declared = binding
             .resolved()
             .channel
             .as_ref()
-            .map(|channel| {
-                channel
-                    .egress
-                    .iter()
-                    .map(DeclaredChannelEgress::from_descriptor)
-                    .collect()
-            })
+            .map(|channel| channel.egress.as_slice())
             .unwrap_or_default();
-        Arc::new(PolicyEnforcedChannelEgress::new(
-            binding.extension_id(),
-            installation_id,
-            declared,
-            Arc::clone(transport),
-        ))
+        Arc::new(egress.policy_for_channel(binding.extension_id(), installation_id, declared))
     }
 }
 

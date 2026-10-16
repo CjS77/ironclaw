@@ -108,6 +108,10 @@ pub struct RebornConfigFile {
     /// host-runtime binding resolver, which owns the profile catalog; this
     /// config layer only does deployment-agnostic structural validation.
     pub memory: Option<MemorySection>,
+    /// Operator-bound addresses for extension egress endpoints
+    /// (`[channel_endpoints.<extension_id>.<endpoint_id>]`). Absent means no
+    /// extension can reach an endpoint target. See `channel_endpoints.rs`.
+    pub channel_endpoints: Option<crate::channel_endpoints::ChannelEndpointsSection>,
     /// Sections this crate's schema used to define and no longer does,
     /// captured verbatim so an existing operator file still parses and can be
     /// answered with migration guidance. `serde(skip)` in both directions: it
@@ -1132,6 +1136,12 @@ impl RebornConfigFile {
                     attributed_path,
                 )?;
             }
+        }
+        if let Some(channel_endpoints) = &self.channel_endpoints {
+            crate::channel_endpoints::validate_channel_endpoints(
+                channel_endpoints,
+                attributed_path,
+            )?;
         }
         if let Some(storage) = &self.storage {
             if let Some(StorageBackend::Unknown(backend)) = &storage.backend {

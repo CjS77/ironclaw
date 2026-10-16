@@ -462,6 +462,10 @@ name = "reborn_integration_real_egress_pipeline"
 path = "tests/integration/real_egress_pipeline.rs"
 
 [[test]]
+name = "reborn_integration_operator_channel_endpoints"
+path = "tests/integration/operator_channel_endpoints.rs"
+
+[[test]]
 name = "reborn_integration_reopen_resume_through_gate"
 path = "tests/integration/auth/reopen_resume_through_gate.rs"
 

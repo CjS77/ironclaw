@@ -1011,6 +1011,17 @@ impl RebornHostBindings {
         }
     }
 
+    /// Attach the operator's `[channel_endpoints]` bindings, resolved by the
+    /// binary from `config.toml`. Boot configuration is the only source:
+    /// nothing tenant- or user-scoped can bind an endpoint.
+    pub fn with_operator_channel_endpoints(
+        mut self,
+        endpoints: ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints,
+    ) -> Self {
+        self.deployment.operator_channel_endpoints = std::sync::Arc::new(endpoints);
+        self
+    }
+
     /// Inject the binary-assembled neutral first-party package inventory.
     pub fn with_first_party_bundles(
         mut self,

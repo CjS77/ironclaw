@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::RebornCliContext;
 
+mod channel_endpoints;
 mod native_extensions;
 // Crate-wide process-env lock lives here (see test_env.rs). `pub(crate)` so
 // non-runtime env-mutating tests (e.g. commands::serve_sso) serialize against
@@ -778,6 +779,12 @@ pub(crate) fn build_services_input_with_options(
         tracing::debug!(target: "ironclaw_reborn", "{diagnostic}");
     }
     services_input = services_input.with_memory_binding_policy(memory_binding_policy);
+
+    // Operator-bound egress endpoints (`[channel_endpoints]`). Boot config is
+    // the only source; an entry the host refuses fails startup here.
+    services_input = services_input.with_operator_channel_endpoints(
+        channel_endpoints::operator_channel_endpoints(config_file.as_ref())?,
+    );
 
     // Connection settings for a third-party memory provider (issue #5264), read
     // the same way the embedding providers read theirs: base URL from the

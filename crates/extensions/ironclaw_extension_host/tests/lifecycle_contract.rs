@@ -1204,3 +1204,161 @@ fn sample_scope() -> ironclaw_host_api::resource::ResourceScope {
         invocation_id: ironclaw_host_api::ids::InvocationId::new(),
     }
 }
+
+// -------------------------------------------------------------------------
+// Operator-configured egress endpoints: activation fails closed when the
+// operator bound nothing, and vendor-call recipes ride the logical rewrite.
+// -------------------------------------------------------------------------
+
+#[derive(Default)]
+struct ApprovedCallRecorder {
+    approved: std::sync::Mutex<Vec<ironclaw_extension_host::egress::ApprovedChannelEgress>>,
+}
+
+#[async_trait::async_trait]
+impl ironclaw_extension_host::egress::ChannelEgressTransport for ApprovedCallRecorder {
+    async fn execute(
+        &self,
+        approved: ironclaw_extension_host::egress::ApprovedChannelEgress,
+    ) -> Result<
+        ironclaw_extension_contracts::tool_adapter::RestrictedEgressResponse,
+        ironclaw_extension_contracts::tool_adapter::RestrictedEgressError,
+    > {
+        self.approved.lock().unwrap().push(approved);
+        Ok(
+            ironclaw_extension_contracts::tool_adapter::RestrictedEgressResponse {
+                status: 200,
+                body: b"{}".to_vec(),
+                retry_after: None,
+            },
+        )
+    }
+}
+
+/// The registering fixture with its one egress target turned into an
+/// operator endpoint named `relay`.
+fn registering_record_on_endpoint() -> InstallationRecord {
+    let mut manifest = registering_channel_manifest();
+    let target = &mut manifest.channel.as_mut().expect("channel").egress[0];
+    target.host = String::new();
+    target.endpoint = Some(
+        ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId::new("relay")
+            .unwrap(),
+    );
+    let mut record = record("acme-hook", manifest);
+    record.config = webhook_config();
+    record
+}
+
+async fn harness_with_endpoints(
+    endpoints: ironclaw_extension_host::channel_endpoints::OperatorChannelEndpoints,
+) -> (Harness, Arc<ApprovedCallRecorder>) {
+    let transport = Arc::new(ApprovedCallRecorder::default());
+    let store = Arc::new(RehydratedInstallationRecordStore::default());
+    let load_calls = Arc::new(AtomicUsize::new(0));
+    let deps = ExtensionHostDeps {
+        store: Arc::clone(&store) as Arc<dyn InstallationRecordStore>,
+        loader: Arc::new(FakeLoader {
+            bindings: channel_only_bindings(Arc::new(FakeChannelAdapter::default())),
+            load_calls: Arc::clone(&load_calls),
+            fail_load: false,
+        }),
+        drain: Arc::new(RecordingDrain::default()) as Arc<_>,
+        egress: Arc::new(
+            ironclaw_extension_host::egress::TransportBackedEgressFactory::new(
+                transport.clone(),
+                Arc::new(endpoints),
+            ),
+        ),
+        reserved_capability_ids: Default::default(),
+        reserved_ingress_routes: Default::default(),
+        hook_deadline: Duration::from_secs(5),
+        linked_sessions: ironclaw_extension_host::LinkedSessionStore::unavailable(),
+        linked_accounts: Arc::new(ironclaw_extension_host::UnavailableLinkedAccountResolution),
+        admin_secrets: None,
+    };
+    let harness = Harness {
+        host: ExtensionHost::new(deps).await,
+        store,
+        load_calls,
+    };
+    (harness, transport)
+}
+
+#[tokio::test]
+async fn activation_fails_closed_when_an_egress_endpoint_is_not_configured() {
+    let (h, transport) = harness_with_endpoints(Default::default()).await;
+    h.host
+        .install(registering_record_on_endpoint())
+        .await
+        .unwrap();
+
+    let error = h.host.activate("acme-hook").await.unwrap_err();
+
+    assert!(
+        matches!(
+            &error,
+            LifecycleError::Bind(ironclaw_extension_host::BindError::EndpointNotConfigured {
+                endpoint
+            }) if endpoint.as_str() == "relay"
+        ),
+        "{error:?}"
+    );
+    assert!(h.host.snapshot().await.extension("acme-hook").is_none());
+    let stored = h.store.get("acme-hook").await.unwrap().unwrap();
+    assert_eq!(stored.state, InstallationState::Failed);
+    assert!(
+        stored
+            .last_error
+            .as_deref()
+            .is_some_and(|reason| reason.contains("relay")),
+        "the operator is told which endpoint to bind: {:?}",
+        stored.last_error
+    );
+    assert!(
+        transport.approved.lock().unwrap().is_empty(),
+        "no vendor call runs for an extension that cannot activate"
+    );
+}
+
+#[tokio::test]
+async fn a_vendor_call_recipe_on_an_endpoint_target_reaches_the_operator_origin() {
+    use ironclaw_extension_host::channel_endpoints::{
+        InsecureHttpPosture, OperatorChannelEndpoint, OperatorChannelEndpoints,
+        PrivateNetworkPosture,
+    };
+    let mut endpoints = OperatorChannelEndpoints::new();
+    endpoints
+        .insert(
+            ironclaw_host_api::ids::ExtensionId::new("acme-hook").unwrap(),
+            ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId::new("relay")
+                .unwrap(),
+            OperatorChannelEndpoint::parse(
+                "https://relay.internal:8443",
+                PrivateNetworkPosture::Denied,
+                InsecureHttpPosture::Denied,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let (h, transport) = harness_with_endpoints(endpoints).await;
+    h.host
+        .install(registering_record_on_endpoint())
+        .await
+        .unwrap();
+
+    h.host.activate("acme-hook").await.expect("activates");
+
+    let approved = transport.approved.lock().unwrap();
+    assert_eq!(approved.len(), 1, "the registration recipe ran once");
+    assert_eq!(
+        approved[0].url, "https://relay.internal:8443/bot{acme_hook_token}/setWebhook",
+        "the logical origin is rewritten; the credential placeholder survives for host-side \
+         injection"
+    );
+    assert_eq!(approved[0].target.pattern.port, Some(8443));
+    assert_eq!(
+        approved[0].target.private_network,
+        PrivateNetworkPosture::Denied
+    );
+}

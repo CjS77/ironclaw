@@ -418,7 +418,11 @@ impl ChannelDescriptor {
             }
         }
         for egress in &self.egress {
-            if egress.host.trim().is_empty() || egress.host.contains('*') {
+            // An endpoint target has no literal host; the registry checks the
+            // host/endpoint shape when it parses the manifest.
+            if egress.endpoint.is_none()
+                && (egress.host.trim().is_empty() || egress.host.contains('*'))
+            {
                 return Err(ChannelDescriptorError::WildcardOrEmptyEgressHost {
                     host: egress.host.clone(),
                 });
@@ -426,12 +430,12 @@ impl ChannelDescriptor {
             if let Some(injection) = &egress.injection {
                 if egress.credential_handle.is_none() {
                     return Err(ChannelDescriptorError::EgressInjectionWithoutCredential {
-                        host: egress.host.clone(),
+                        host: egress.label(),
                     });
                 }
                 if injection.validate_declaration().is_err() {
                     return Err(ChannelDescriptorError::InvalidEgressInjection {
-                        host: egress.host.clone(),
+                        host: egress.label(),
                     });
                 }
             }
@@ -441,7 +445,7 @@ impl ChannelDescriptor {
                     || seen_body_handles.contains(&body_credential.handle.as_str())
                 {
                     return Err(ChannelDescriptorError::InvalidEgressInjection {
-                        host: egress.host.clone(),
+                        host: egress.label(),
                     });
                 }
                 seen_body_handles.push(body_credential.handle.as_str());
@@ -449,7 +453,7 @@ impl ChannelDescriptor {
             for path in egress.paths.iter().chain(&egress.path_prefixes) {
                 if !valid_egress_path_constraint(path, egress.injection.as_ref()) {
                     return Err(ChannelDescriptorError::InvalidEgressConstraint {
-                        host: egress.host.clone(),
+                        host: egress.label(),
                     });
                 }
             }
@@ -461,7 +465,7 @@ impl ChannelDescriptor {
             for prefix in &egress.path_prefixes {
                 if !prefix.ends_with('/') {
                     return Err(ChannelDescriptorError::InvalidEgressConstraint {
-                        host: egress.host.clone(),
+                        host: egress.label(),
                     });
                 }
             }
@@ -473,7 +477,7 @@ impl ChannelDescriptor {
                     .is_some_and(|limit| limit == 0 || limit > MAX_CHANNEL_EGRESS_TRANSFER_BYTES)
             {
                 return Err(ChannelDescriptorError::InvalidEgressConstraint {
-                    host: egress.host.clone(),
+                    host: egress.label(),
                 });
             }
         }
@@ -693,7 +697,15 @@ fn default_body_limit_bytes() -> u64 {
 pub struct ChannelEgressDescriptor {
     #[serde(default = "default_https")]
     pub scheme: NetworkScheme,
+    /// The literal vendor host. Empty when [`Self::endpoint`] names the
+    /// target instead; validation requires exactly one of the two.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub host: String,
+    /// An operator-configured endpoint, for a service whose address only the
+    /// deployment knows (`crate::channel_endpoint`). Adapters address it at
+    /// its logical `https` URL; the host rewrites the origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<crate::channel_endpoint::ChannelEgressEndpointId>,
     pub methods: Vec<ironclaw_host_api::action::NetworkMethod>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_handle: Option<SecretHandle>,

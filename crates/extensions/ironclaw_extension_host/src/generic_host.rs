@@ -69,7 +69,9 @@ pub struct GenericExtensionHostParams {
     pub boot_installations: Vec<InstallationRecord>,
     pub governor: Arc<dyn ResourceGovernor>,
     pub assembly: ExtensionHostAssemblyConfig,
-    pub channel_egress_transport: Option<Arc<dyn crate::egress::ChannelEgressTransport>>,
+    /// Channel egress: the transport plus the operator's endpoint bindings.
+    /// `None` composes a host whose channel egress denies every call.
+    pub channel_egress: Option<Arc<crate::egress::TransportBackedEgressFactory>>,
     /// Linked-account custody. A deployment that wires none passes
     /// [`LinkedSessionStore::unavailable`] — the fail-closed store, chosen at
     /// the composition boundary rather than defaulted here, so this type
@@ -196,7 +198,7 @@ pub async fn build_generic_extension_host(
         boot_installations,
         governor,
         assembly,
-        channel_egress_transport,
+        channel_egress,
         linked_sessions,
         linked_accounts,
         admin_secrets,
@@ -215,8 +217,8 @@ pub async fn build_generic_extension_host(
     // Channel hooks (and, at P5, deliver()) egress through the declared
     // [[channel.egress]] policy over the injected transport; compositions
     // built without a transport stay fail-closed.
-    let egress: Arc<dyn EgressFactory> = match channel_egress_transport {
-        Some(transport) => Arc::new(crate::egress::TransportBackedEgressFactory::new(transport)),
+    let egress: Arc<dyn EgressFactory> = match channel_egress {
+        Some(egress) => egress,
         None => Arc::new(DenyAllEgressFactory),
     };
     let host = Arc::new(
@@ -791,6 +793,17 @@ impl EgressFactory for DenyAllEgressFactory {
     ) -> Arc<dyn RestrictedEgress> {
         Arc::new(DenyAllRestrictedEgress)
     }
+
+    /// A host without channel egress denies every send already, so an
+    /// endpoint target is not reported as unbound: that error would send the
+    /// operator to `[channel_endpoints]` for a binding that is not missing.
+    fn unconfigured_endpoint(
+        &self,
+        _extension_id: &str,
+        _declared: &[ironclaw_extension_contracts::channel::ChannelEgressDescriptor],
+    ) -> Option<ironclaw_extension_contracts::channel_endpoint::ChannelEgressEndpointId> {
+        None
+    }
 }
 
 struct DenyAllRestrictedEgress;
@@ -808,6 +821,24 @@ impl RestrictedEgress for DenyAllRestrictedEgress {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+
+    /// Without channel egress every send is denied already; reporting an
+    /// endpoint as unbound would send the operator after a binding that is
+    /// not missing.
+    #[test]
+    fn deny_all_egress_does_not_report_endpoints_as_unbound() {
+        let declared: Vec<ironclaw_extension_contracts::channel::ChannelEgressDescriptor> = vec![
+            serde_json::from_value(serde_json::json!({
+                "endpoint": "relay",
+                "methods": ["post"],
+            }))
+            .unwrap(),
+        ];
+        assert_eq!(
+            super::DenyAllEgressFactory.unconfigured_endpoint("acme-inbox", &declared),
+            None
+        );
+    }
 
     use ironclaw_authorization::GrantAuthorizer;
     use ironclaw_extension_contracts::extension::ExtensionHostAssemblyConfig;
@@ -1091,7 +1122,7 @@ input_schema_ref = "schemas/echo.input.json"
                 BTreeSet::new(),
                 Duration::from_secs(30),
             ),
-            channel_egress_transport: None,
+            channel_egress: None,
             linked_sessions: LinkedSessionStore::unavailable(),
             linked_accounts: Arc::new(
                 crate::linked_account_resolution::UnavailableLinkedAccountResolution,

@@ -634,7 +634,7 @@ async fn build_lifecycle_test_services_over_backing(
                     Default::default(),
                     std::time::Duration::from_secs(30),
                 ),
-                channel_egress_transport: None,
+                channel_egress: None,
                 linked_sessions: ironclaw_extension_host::LinkedSessionStore::unavailable(),
                 linked_accounts: std::sync::Arc::new(
                     ironclaw_extension_host::UnavailableLinkedAccountResolution,

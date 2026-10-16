@@ -884,7 +884,19 @@ fn reborn_contracts_crates_carry_a_checked_size_ceiling() {
         // the cap's inline test (~63 lines). Declaration and shape
         // validation only; execution stays in ironclaw_extension_host's
         // lifecycle.
-        ("ironclaw_extension_contracts", 13_026),
+        // 13_026 -> 13_206 (2026-10-16, operator-configured egress
+        // endpoints): vocabulary only. The `channel_endpoint` module (the
+        // `ChannelEgressEndpointId` newtype in the canonical template and
+        // the reserved logical-host suffix constant), the optional
+        // `endpoint` field on `ChannelEgressDescriptor`, a one-line
+        // diagnostic `label()`, and the existing empty-host check skipping
+        // endpoint targets. The host/endpoint shape rules live in
+        // `ironclaw_extension_registry`'s manifest parser; address parsing,
+        // operator bindings, origin rewrite and network policy live in
+        // `ironclaw_extension_host`. 55 lines of the delta are growth `main`
+        // had banked inside the +150 window (main measures 13_081). Count
+        // read from this test's own failure message.
+        ("ironclaw_extension_contracts", 13_206),
         // Raised 17_501 -> 18_570 by #6831 (standardized messaging framework):
         // the growth is the `messaging` vocabulary — the StandardMessagingOp
         // enum, the 12-code error taxonomy, compiled-in canonical schema/prompt

@@ -16,7 +16,7 @@ persistence, policy engine, or workflow.
 
 Re-derive the shipped-module count with
 `rg -n "^pub mod " crates/contracts/ironclaw_extension_contracts/src/lib.rs | wc -l`,
-minus one for the feature-gated `test_support` module — 21 at the time of
+minus one for the feature-gated `test_support` module — 22 at the time of
 writing, the figure `README.md` states (no architecture test currently pins
 this count against the table below — treat the table as a map, not an
 enforced inventory, until one exists):
@@ -26,6 +26,7 @@ enforced inventory, until one exists):
 | `auth_prompt` | The channel-rendered auth challenge family: `AuthPromptView`, `AuthPromptChallengeKind`, `ConnectionPromptContext`, `PairingPromptView`, `AuthPromptContextView`, and `render_channel_auth_prompt`. Arrived with WS1.4 — `OutboundPart::AuthPrompt` names it and both channel packages render it. |
 | `channel` | Channel manifest-surface descriptors: `ChannelDescriptor`, `ChannelIngressDescriptor`, `ChannelEgressDescriptor`, `ChannelPresentation`, connection strategy/notices, and their validators. |
 | `channel_adapter` | The two channel capability traits — `ChannelIngress` and `ChannelDelivery` — plus `ChannelSurfaces` (whose `reply` slot holds the `reply::ReplySink` a declared `[channel.reply]` binds) and their DTO family (`VerifiedInbound`, `InboundOutcome`, `NormalizedInboundMessage`/`InboundAttachment`, `OutboundEnvelope`/`Part`/`Target`, `DeliveryReport`, `DirectTargetProvisionRequest`, `ChannelError`, `ProductTriggerReason`). `ChannelAttachmentRef` is package-internal parse→fetch state, never host ingress vocabulary. The traits pair with vendor `[channel.ingress]` and `[channel.delivery]`; authenticated-session ingress stays host-owned with no adapter half. Direct-target provisioning is an optional typed operation on `ChannelDelivery`, not a target-search grammar. |
+| `channel_endpoint` | Operator-configured egress endpoint vocabulary: `ChannelEgressEndpointId` (one DNS label, the id a `[[channel.egress]]` target names instead of a host) and `CHANNEL_ENDPOINT_LOGICAL_HOST_SUFFIX`. Vocabulary only: building and parsing logical hosts, the operator bindings, and the origin rewrite live in `ironclaw_extension_host::channel_endpoints` and `egress`. |
 | `channel_identity` | The channel-identity hooks a host runs around binding: `ChannelConnectionScopeSource`, `ChannelIdentityPostBind(Factory)`, `ChannelIdentityOverride`. |
 | `device_link` | The device-link auth hook: `DeviceLinkAdapter`, `DeviceLinkStep`, `DeviceLinkInput`, `DeviceLinkError`. The one auth method whose mechanics an extension implements instead of declaring; `DeviceLinkInput` deliberately does not implement `Serialize` so a step or event physically cannot carry a secret. |
 | `egress` | Channel egress transport vocabulary: `ProtocolHttpEgress`, the `Egress*` request/response types, `DeliveryStatus`/`OutboundDeliverySink`, `DeclaredEgressHost`/`Target` — arrived with WS1.4. |

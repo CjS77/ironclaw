@@ -32,7 +32,8 @@ Grouped by responsibility (all modules are `pub`; see `src/lib.rs`):
   (`channel_host.rs`, the ingress reconciler), delivery ports
   (`run_delivery_ports.rs`, `channel_delivery.rs`), egress transports
   (`egress.rs`, `channel_egress.rs` — credentials injected by the host at send
-  time), identity + actor resolution (`ProviderIdentityActorResolver`,
+  time; `channel_endpoints.rs` holds the operator's `[channel_endpoints]`
+  bindings that `egress.rs` rewrites logical endpoint URLs onto), identity + actor resolution (`ProviderIdentityActorResolver`,
   `provider_identity.rs`), and the pairing / connection / config / admin-config
   service cores (`channel_pairing*`, `channel_connection.rs`,
   `channel_config.rs`, `admin_configuration_*`).
