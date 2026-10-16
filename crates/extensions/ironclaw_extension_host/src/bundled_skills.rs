@@ -3,7 +3,6 @@ use std::fs;
 use std::hash::Hasher;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use ironclaw_filesystem::{
     CasExpectation, DiskFilesystem, Entry, FileType, FilesystemError, RootFilesystem,
@@ -12,9 +11,12 @@ use ironclaw_host_api::path::{HostPath, VirtualPath};
 use ironclaw_loop_host::SkillFilePath;
 use ironclaw_skills::{ManagedSkillSource, SkillSummary};
 use serde::{Deserialize, Serialize};
-use tokio::time::sleep;
 
 use crate::RebornBuildError;
+
+mod install_lock;
+
+use install_lock::{BundledSkillInstallLock, InstallLockPolicy};
 
 const EMBEDDED_REBORN_SKILL_SUMMARIES_JSON: &str = include_str!(concat!(
     env!("OUT_DIR"),
@@ -25,10 +27,7 @@ const EMBEDDED_REBORN_SKILL_BUNDLES_JSON: &str = include_str!(concat!(
     "/embedded_reborn_skill_bundles.json"
 ));
 const BUNDLED_MARKER_FILE: &str = ".ironclaw-reborn-bundled.json";
-const BUNDLED_INSTALL_LOCK_FILE: &str = ".ironclaw-reborn-bundled.lock";
 const BUNDLED_MARKER_OWNER: &str = "ironclaw_composition_bundled_skill";
-const BUNDLED_INSTALL_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
-const BUNDLED_INSTALL_LOCK_RETRY: Duration = Duration::from_millis(25);
 const SYSTEM_SKILLS_ROOT: &str = "/projects/system/skills";
 pub const LEGACY_SKILLS_BACKFILL_MARKER: &str = ".legacy-skills-backfilled";
 const LEGACY_SKILLS_BACKFILL_MAX_DEPTH: usize = 64;
@@ -238,9 +237,29 @@ struct BundledSkillMarker {
 pub async fn ensure_bundled_reborn_skills_installed(
     standalone_storage_root: &Path,
 ) -> Result<(), RebornBuildError> {
-    let filesystem = standalone_storage_filesystem(standalone_storage_root)?;
+    install_into_standalone_root(standalone_storage_root, &InstallLockPolicy::default()).await
+}
+
+/// The standalone install, with the install lock's timings supplied by the caller.
+///
+/// The storage root is a host directory, so the install lock is backed by an OS file lock on
+/// [`install_lock::HOST_LOCK_FILE`] inside it as well as by the lock entry under
+/// `system/skills` (see [`install_lock`] for why both are needed).
+async fn install_into_standalone_root(
+    standalone_storage_root: &Path,
+    lock_policy: &InstallLockPolicy,
+) -> Result<(), RebornBuildError> {
+    let storage_root = prepare_standalone_storage_root(standalone_storage_root)?;
+    let filesystem = standalone_storage_filesystem(&storage_root)?;
     let system_skills_root = system_skills_root_path()?;
-    ensure_bundled_reborn_skills_installed_in(&filesystem, &system_skills_root).await
+    let host_lock_file = storage_root.join(install_lock::HOST_LOCK_FILE);
+    install_bundled_skills(
+        &filesystem,
+        &system_skills_root,
+        Some(&host_lock_file),
+        lock_policy,
+    )
+    .await
 }
 
 /// Install the bundled skills into ANY skill root, on any filesystem backend.
@@ -251,12 +270,32 @@ pub async fn ensure_bundled_reborn_skills_installed(
 /// `/system/skills` is mounted there, to the database, and nothing ever wrote to it. The Skills page
 /// read an empty root and correctly said "No skills installed".
 ///
-/// Every helper below already took `&dyn RootFilesystem`; only the entry point was disk-bound. The
-/// marker, install lock, and stale-skill removal are unchanged, so this stays idempotent across boots
-/// and safe when several instances share one database.
+/// The install is idempotent across boots: a per-skill marker skips unchanged skills. It is safe
+/// when several instances share one database, because a lock entry under the skill root lets one
+/// installer in at a time; a lock left by a process that died is detected and replaced by
+/// compare-and-swap on the entry's version (the `install_lock` module documents the rules).
 pub async fn ensure_bundled_reborn_skills_installed_in(
     filesystem: &dyn RootFilesystem,
     system_skills_root: &VirtualPath,
+) -> Result<(), RebornBuildError> {
+    install_bundled_skills(
+        filesystem,
+        system_skills_root,
+        None,
+        &InstallLockPolicy::default(),
+    )
+    .await
+}
+
+/// Shared body of both public install entry points.
+///
+/// `host_lock_file` is `Some` only when the skill root lives on a host directory this process
+/// can lock with the OS; every other backend relies on compare-and-swap on the lock entry alone.
+async fn install_bundled_skills(
+    filesystem: &dyn RootFilesystem,
+    system_skills_root: &VirtualPath,
+    host_lock_file: Option<&Path>,
+    lock_policy: &InstallLockPolicy,
 ) -> Result<(), RebornBuildError> {
     let bundled_skills = embedded_reborn_skill_bundles()?;
     // Best-effort, and it must be: `RootFilesystem::create_dir_all` is documented as deprecated
@@ -276,7 +315,13 @@ pub async fn ensure_bundled_reborn_skills_installed_in(
              prefixes"
         );
     }
-    let install_lock = BundledSkillInstallLock::acquire(filesystem, system_skills_root).await?;
+    let install_lock = BundledSkillInstallLock::acquire(
+        filesystem,
+        system_skills_root,
+        host_lock_file,
+        lock_policy,
+    )
+    .await?;
     let result = async {
         let bundled_names = bundled_skills
             .iter()
@@ -345,15 +390,13 @@ fn embedded_reborn_skill_bundles() -> Result<Vec<EmbeddedRebornSkillBundle>, Reb
     })
 }
 
-fn standalone_storage_filesystem(
-    standalone_storage_root: &Path,
-) -> Result<DiskFilesystem, RebornBuildError> {
-    let storage_root = prepare_standalone_storage_root(standalone_storage_root)?;
+/// Mounts an already prepared (canonical, non-symlink) storage root at `/projects`.
+fn standalone_storage_filesystem(storage_root: &Path) -> Result<DiskFilesystem, RebornBuildError> {
     let mut filesystem = DiskFilesystem::new();
     filesystem
         .mount_local(
             VirtualPath::new("/projects")?,
-            HostPath::from_path_buf(storage_root),
+            HostPath::from_path_buf(storage_root.to_path_buf()),
         )
         .map_err(invalid_config)?;
     Ok(filesystem)
@@ -391,49 +434,6 @@ fn reject_existing_symlink(path: &Path, label: &str) -> Result<(), RebornBuildEr
 
 fn system_skills_root_path() -> Result<VirtualPath, RebornBuildError> {
     VirtualPath::new(SYSTEM_SKILLS_ROOT).map_err(invalid_config)
-}
-
-struct BundledSkillInstallLock {
-    path: VirtualPath,
-}
-
-impl BundledSkillInstallLock {
-    async fn acquire(
-        filesystem: &dyn RootFilesystem,
-        system_skills_root: &VirtualPath,
-    ) -> Result<Self, RebornBuildError> {
-        let path = child_path(system_skills_root, BUNDLED_INSTALL_LOCK_FILE)?;
-        let started_at = Instant::now();
-        loop {
-            match filesystem
-                .put(
-                    &path,
-                    Entry::bytes(format!("{:?}", started_at).into_bytes()),
-                    CasExpectation::Absent,
-                )
-                .await
-            {
-                Ok(_) => return Ok(Self { path }),
-                Err(error)
-                    if matches!(error, FilesystemError::VersionMismatch { .. })
-                        && started_at.elapsed() < BUNDLED_INSTALL_LOCK_TIMEOUT =>
-                {
-                    sleep(BUNDLED_INSTALL_LOCK_RETRY).await;
-                }
-                Err(FilesystemError::VersionMismatch { .. }) => {
-                    return Err(invalid_config(format!(
-                        "timed out waiting for bundled skill install lock: {}",
-                        path
-                    )));
-                }
-                Err(error) => return Err(invalid_config(error)),
-            }
-        }
-    }
-
-    async fn release(self, filesystem: &dyn RootFilesystem) -> Result<(), RebornBuildError> {
-        delete_if_exists(filesystem, &self.path).await
-    }
 }
 
 async fn remove_stale_managed_skills(
