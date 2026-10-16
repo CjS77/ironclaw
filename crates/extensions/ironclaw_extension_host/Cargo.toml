@@ -87,10 +87,11 @@ tracing = "0.1"
 url = "2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
-# Pid liveness (`kill(pid, 0)`) and the hostname for the bundled-skill install lock's holder
-# record. Already in the workspace via composition and operator.
+# Pid liveness (`kill(pid, 0)`), the hostname for the bundled-skill install lock's holder
+# record, and `O_NOFOLLOW` for opening its host lock file. Already in the workspace via
+# composition and operator.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["hostname", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "hostname", "signal"] }
 
 [build-dependencies]
 ironclaw_skills = { path = "../../domains/ironclaw_skills" }
@@ -113,6 +114,11 @@ http-body-util = "0.1"
 # A real libSQL database for the bundled-skill install-lock tests, which must hold on
 # every backend that can host `/system/skills`.
 libsql = { version = "0.9", default-features = false, features = ["core"] }
+# The install-lock tests' PostgreSQL leg (the production backend): a testcontainer, skipped when
+# Docker is unavailable. Same image the CI lanes pre-pull.
+deadpool-postgres = "0.14"
+testcontainers-modules = { version = "0.12", features = ["postgres"] }
+tokio-postgres = "0.7"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time", "test-util"] }
 tower = { version = "0.5", features = ["util"] }

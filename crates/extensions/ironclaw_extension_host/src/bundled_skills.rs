@@ -271,9 +271,10 @@ async fn install_into_standalone_root(
 /// read an empty root and correctly said "No skills installed".
 ///
 /// The install is idempotent across boots: a per-skill marker skips unchanged skills. It is safe
-/// when several instances share one database, because a lock entry under the skill root lets one
-/// installer in at a time; a lock left by a process that died is detected and replaced by
-/// compare-and-swap on the entry's version (the `install_lock` module documents the rules).
+/// when several instances share one database, because a leased lock entry under the skill root
+/// lets one installer in at a time. The holder renews the lease while it installs; a lock whose
+/// lease stops being renewed (its process died) is replaced by compare-and-swap on the entry's
+/// version (the `install_lock` module documents the rules).
 pub async fn ensure_bundled_reborn_skills_installed_in(
     filesystem: &dyn RootFilesystem,
     system_skills_root: &VirtualPath,
@@ -315,26 +316,27 @@ async fn install_bundled_skills(
              prefixes"
         );
     }
-    let install_lock = BundledSkillInstallLock::acquire(
+    let mut install_lock = BundledSkillInstallLock::acquire(
         filesystem,
         system_skills_root,
         host_lock_file,
         lock_policy,
     )
     .await?;
-    let result = async {
-        let bundled_names = bundled_skills
-            .iter()
-            .map(|skill| skill.name.as_str())
-            .collect::<HashSet<_>>();
-        remove_stale_managed_skills(filesystem, system_skills_root, &bundled_names).await?;
+    let result = install_lock
+        .hold_while(filesystem, async move {
+            let bundled_names = bundled_skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<HashSet<_>>();
+            remove_stale_managed_skills(filesystem, system_skills_root, &bundled_names).await?;
 
-        for skill in bundled_skills {
-            install_bundled_skill(filesystem, system_skills_root, skill).await?;
-        }
-        Ok(())
-    }
-    .await;
+            for skill in bundled_skills {
+                install_bundled_skill(filesystem, system_skills_root, skill).await?;
+            }
+            Ok(())
+        })
+        .await;
 
     let release_result = install_lock.release(filesystem).await;
     match (result, release_result) {
