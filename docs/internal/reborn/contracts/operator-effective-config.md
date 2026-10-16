@@ -14,6 +14,8 @@ The first implementation slice should expose the LLM default route through the e
 | `model.default` | yes | yes | string model id or `null` | active LLM selection | not redacted |
 | `provider.api_key` | yes | yes when active provider accepts API keys | redacted secret state | secret store or env metadata only | value always serialized as `null` |
 
+`config.toml` `[channel_endpoints]` (operator-bound extension egress endpoints, `network.md` §3.2) is deliberately not an operator config key: it is read once at boot from the file, and no HTTP surface reads or writes it.
+
 ## ProductSurface mutation path
 
 Operator config reads are descriptor-backed ProductSurface query views:

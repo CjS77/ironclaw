@@ -46,6 +46,7 @@ Rules:
 - settings may reference `SecretHandle`, never `SecretMaterial`;
 - bootstrap config does not silently override DB-backed runtime settings after setup unless precedence says so;
 - post-secret LLM/provider resolution must re-resolve after secrets become available.
+- network reach into the operator's own network is bootstrap config only: `config.toml` `[channel_endpoints]` binds extension egress endpoints (see `network.md` §3.2), and no DB-backed, tenant-admin, or extension config layer can add or change one.
 
 ---
 

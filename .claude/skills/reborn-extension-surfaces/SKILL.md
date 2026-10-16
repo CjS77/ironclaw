@@ -101,7 +101,10 @@ Re-verify the module list: `grep -n 'ID,' crates/extensions/ironclaw_extension_s
    `[channel.ingress.verification]` (declarative recipe the *host* executes —
    `hmac_sha256` segment list or `shared_secret_header`; signing secrets never
    reach the adapter), `[channel.connection]` (connection strategy),
-   `[[channel.egress]]` (host allowlist + credential handle), and
+   `[[channel.egress]]` (host allowlist + credential handle; a target may
+   name an operator-bound `endpoint` instead of a `host` for a service whose
+   address only the deployment knows — see
+   `docs/internal/reborn/contracts/network.md` §3.2), and
    `[channel.presentation]`. Operator/deployment setup fields are a separate
    top-level `[admin_configuration]` section (there is no `[channel.config]`);
    the host renders the generic form from it.

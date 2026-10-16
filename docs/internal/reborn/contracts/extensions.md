@@ -498,6 +498,24 @@ Rules:
   authority namespace, not the extension id: several extensions (gmail,
   google-drive, ...) may share one provider (`google`).
 
+Channel egress endpoints. A `[[channel.egress]]` target declares exactly one
+of a literal `host` or an `endpoint` id (`ChannelEgressEndpointId`, one DNS
+label); only a first-party or system manifest may declare an endpoint. An
+endpoint target keeps the default `https` scheme, and a literal host may not
+sit under the reserved `channel-endpoint.invalid` domain. The manifest parser
+(`ironclaw_extension_registry` v3 validation) enforces all of these. An
+endpoint carries no address in the manifest: the operator binds it
+in `config.toml` `[channel_endpoints]`, and activation fails closed
+(`BindError::EndpointNotConfigured`) when the binding is missing. Both fields
+are optional on the wire and skipped when empty, so existing resolved records
+keep their bytes; `manifest_v3_contract.rs::shipped_manifest_resolved_records_are_byte_stable`
+pins the digests. Policy and rewrite rules: `network.md` §3.2.
+
+Tool egress has no endpoint form yet. Lane-backed tools reach the network
+through `network_targets` and credential audiences folded into their grant's
+`NetworkPolicy`, with the URL chosen by the lane; native tool adapters receive
+no egress port (`ToolPorts::egress` is `None` on every dispatch path).
+
 Tests: `crates/extensions/ironclaw_extension_registry/tests/manifest_v2_contract.rs`
 (capability surface projection block) and
 `crates/extensions/ironclaw_extension_registry/tests/product_adapter_manifest_ingestion.rs`

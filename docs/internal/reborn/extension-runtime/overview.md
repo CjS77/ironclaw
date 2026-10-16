@@ -240,6 +240,13 @@ Notes on the sections:
   lists preserve the legacy host+method policy. Path-placeholder credentials
   remain host-injected; the policy matcher evaluates the placeholder-bearing
   path, and the runtime substitutes the secret only after approval.
+  A target may name an operator-configured `endpoint` instead of a `host`
+  (exactly one of the two) when the service's address is deployment-specific.
+  The operator binds `[channel_endpoints.<extension>.<endpoint>]` in
+  `config.toml`; adapters send to `https://<endpoint>.channel-endpoint.invalid/…`
+  and the host rewrites the origin after policy, adding the private-network
+  exemption only when the operator opted that endpoint in. See
+  `docs/internal/reborn/contracts/network.md` §3.2.
 - **`conversation_model`** (required on `[channel]`) classifies how external
   conversations map to IronClaw conversations:
   - `continuous` — the protocol supplies conversation identity; each external
