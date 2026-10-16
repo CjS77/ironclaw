@@ -90,7 +90,7 @@ where
             let permit = StaticNetworkPolicyEnforcer::new(request.policy.clone())
                 .authorize_blocking(NetworkRequest {
                     // This clone only carries scoped identity metadata; the sensitive
-                    // URL/header/body buffers are still moved out below with `mem::take`.
+                    // URL/header buffers are still moved out below with `mem::take`.
                     scope: request.scope.clone(),
                     target: target.clone(),
                     method: request.method,
@@ -116,11 +116,19 @@ where
             // response, but it is scrubbed out of `request` by the `mem::take`
             // below, so capture it here before it is moved into the transport.
             let request_url = request.url.clone();
+            // A 307/308 redirect must resend this exact body, so it stays in
+            // `request` while another hop may still follow. Once the hop budget
+            // is spent no redirect will be followed, and the buffer is moved.
+            let body = if redirects_remaining == 0 {
+                std::mem::take(&mut request.body)
+            } else {
+                request.body.clone()
+            };
             let transport_request = NetworkTransportRequest {
                 method: permit.method,
                 url: std::mem::take(&mut request.url),
                 headers: std::mem::take(&mut request.headers),
-                body: std::mem::take(&mut request.body),
+                body,
                 resolved_ips,
                 response_body_limit: request.response_body_limit,
                 timeout_ms: request.timeout_ms,
@@ -150,7 +158,8 @@ where
             redirects_remaining -= 1;
             request.url = next_url;
             // 303 (and, following prevailing client behavior, 301/302) drop to a
-            // bodyless GET; 307/308 preserve the method and body.
+            // bodyless GET; 307/308 resend the same method and body, and the
+            // next hop's size estimate above counts that body.
             if !preserves_method_on_redirect(response.status) {
                 request.method = NetworkMethod::Get;
                 request.body = Vec::new();

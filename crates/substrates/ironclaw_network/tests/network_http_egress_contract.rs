@@ -664,6 +664,126 @@ async fn http_egress_bounds_redirect_hops() {
     );
 }
 
+/// A POST with a body against `api.example.test`, answered first by a
+/// redirect with the given status to another path on the same origin.
+async fn post_through_redirect(
+    status: u16,
+    body: &[u8],
+) -> (NetworkHttpResponse, Vec<NetworkTransportRequest>) {
+    let transport = ScriptedTransport::new(vec![
+        redirect_response_with_status(status, "/v1/moved"),
+        ok_response("done"),
+    ]);
+    let requests = transport.requests.clone();
+    let egress = PolicyNetworkHttpEgress::new_with_resolver(
+        transport,
+        StaticResolver::new(vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]),
+    );
+    let mut request = sample_request("https://api.example.test/v1/upload");
+    request.method = NetworkMethod::Post;
+    request.body = body.to_vec();
+    let response = egress
+        .execute(request)
+        .await
+        .expect("a same-origin redirect should be followed");
+    let requests = std::mem::take(&mut *requests.lock().unwrap());
+    (response, requests)
+}
+
+#[tokio::test]
+async fn http_egress_307_redirect_repeats_method_and_body() {
+    let (response, requests) = post_through_redirect(307, b"payload=307").await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        requests.len(),
+        2,
+        "one initial request plus one followed hop"
+    );
+    assert_eq!(requests[0].body, b"payload=307");
+    assert_eq!(requests[1].url, "https://api.example.test/v1/moved");
+    assert_eq!(requests[1].method, NetworkMethod::Post);
+    assert_eq!(
+        requests[1].body, b"payload=307",
+        "a 307 hop must resend the original body"
+    );
+}
+
+#[tokio::test]
+async fn http_egress_308_redirect_repeats_method_and_body() {
+    let (response, requests) = post_through_redirect(308, b"payload=308").await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        requests.len(),
+        2,
+        "one initial request plus one followed hop"
+    );
+    assert_eq!(requests[1].url, "https://api.example.test/v1/moved");
+    assert_eq!(requests[1].method, NetworkMethod::Post);
+    assert_eq!(
+        requests[1].body, b"payload=308",
+        "a 308 hop must resend the original body"
+    );
+}
+
+#[tokio::test]
+async fn http_egress_303_redirect_drops_to_bodyless_get() {
+    let (response, requests) = post_through_redirect(303, b"payload=303").await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        requests.len(),
+        2,
+        "one initial request plus one followed hop"
+    );
+    assert_eq!(requests[0].method, NetworkMethod::Post);
+    assert_eq!(requests[0].body, b"payload=303");
+    assert_eq!(requests[1].method, NetworkMethod::Get);
+    assert!(
+        requests[1].body.is_empty(),
+        "a 303 hop is a GET with no body; got {:?}",
+        requests[1].body
+    );
+}
+
+#[tokio::test]
+async fn http_egress_size_checks_307_hop_against_the_body_it_resends() {
+    // The first hop fits the egress limit. The redirect target has a longer
+    // URL, so the second hop only fits if its estimate leaves the body out.
+    let body = vec![b'x'; 100];
+    let first_url = "https://api.example.test/v1/upload".to_string();
+    let next_path = format!("/v1/upload/{}", "y".repeat(60));
+    let limit = (first_url.len() + body.len() + 50) as u64;
+    let transport = ScriptedTransport::new(vec![
+        redirect_response_with_status(307, &next_path),
+        ok_response("done"),
+    ]);
+    let requests = transport.requests.clone();
+    let egress = PolicyNetworkHttpEgress::new_with_resolver(
+        transport,
+        StaticResolver::new(vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]),
+    );
+
+    let error = egress
+        .execute(NetworkHttpRequest {
+            scope: sample_scope(),
+            method: NetworkMethod::Post,
+            url: first_url,
+            headers: vec![],
+            body,
+            policy: policy("api.example.test", Some(443), true, Some(limit)),
+            response_body_limit: Some(1024),
+            timeout_ms: None,
+        })
+        .await
+        .expect_err("a 307 hop must count the body it resends toward the egress limit");
+
+    assert!(matches!(error, NetworkHttpError::PolicyDenied { .. }));
+    assert!(error.to_string().contains("egress estimate"));
+    assert_eq!(requests.lock().unwrap().len(), 1, "only the first hop ran");
+}
+
 #[tokio::test]
 async fn reqwest_transport_forwards_all_headers_to_http_client() {
     let (url, request_bytes, server) =
@@ -1134,8 +1254,12 @@ impl NetworkHttpTransport for ScriptedTransport {
 }
 
 fn redirect_response(location: &str) -> NetworkHttpResponse {
+    redirect_response_with_status(302, location)
+}
+
+fn redirect_response_with_status(status: u16, location: &str) -> NetworkHttpResponse {
     NetworkHttpResponse {
-        status: 302,
+        status,
         headers: vec![("location".to_string(), location.to_string())],
         body: vec![],
         usage: NetworkUsage::default(),
