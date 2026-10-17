@@ -635,6 +635,71 @@ async fn http_egress_follows_allowlisted_redirect_and_strips_credentials() {
 }
 
 #[tokio::test]
+async fn http_egress_follows_redirects_only_for_get_and_head() {
+    // GET and HEAD follow every redirect status and keep their method. Any
+    // other method gets the redirect response back unchanged, so a request
+    // body is never resent: it can carry a host-injected credential, and
+    // resending it would also need its headers and size limit carried across
+    // hops. A 307 to a POST used to go out again with an empty body.
+    // safety: `execute` below is an HTTP egress call, not a database operation.
+    for status in [301, 302, 303, 307, 308] {
+        for method in [NetworkMethod::Get, NetworkMethod::Head] {
+            let transport = ScriptedTransport::new(vec![
+                redirect_with_status(status, "https://api.example.test/moved"),
+                ok_response("moved"),
+            ]);
+            let requests = transport.requests.clone();
+            let mut request = sample_request("https://api.example.test/start");
+            request.method = method;
+            let response = redirect_test_egress(transport)
+                .execute(request)
+                .await
+                .expect("a GET or HEAD redirect is followed");
+
+            assert_eq!(response.status, 200, "{method:?} {status}");
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 2, "{method:?} {status}");
+            assert_eq!(requests[1].url, "https://api.example.test/moved");
+            assert_eq!(requests[1].method, method, "{method:?} {status}");
+            assert!(requests[1].body.is_empty(), "{method:?} {status}");
+        }
+        for method in [
+            NetworkMethod::Post,
+            NetworkMethod::Put,
+            NetworkMethod::Patch,
+            NetworkMethod::Delete,
+        ] {
+            let transport = ScriptedTransport::new(vec![redirect_with_status(
+                status,
+                "https://api.example.test/moved",
+            )]);
+            let requests = transport.requests.clone();
+            let mut request = sample_request("https://api.example.test/start");
+            request.method = method;
+            request.body = b"payload".to_vec();
+            let response = redirect_test_egress(transport)
+                .execute(request)
+                .await
+                .expect("the redirect response is returned to the caller");
+
+            assert_eq!(response.status, status, "{method:?} {status}");
+            assert!(
+                response.headers.iter().any(|(name, value)| {
+                    name.eq_ignore_ascii_case("location")
+                        && value == "https://api.example.test/moved"
+                }),
+                "the caller sees where it was sent: {method:?} {status}"
+            );
+            assert_eq!(
+                requests.lock().unwrap().len(),
+                1,
+                "{method:?} {status} is not followed"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn http_egress_bounds_redirect_hops() {
     // Even when every hop targets an allowlisted host, the loop must stop after
     // the bound and return the last response instead of following forever.
@@ -1134,12 +1199,25 @@ impl NetworkHttpTransport for ScriptedTransport {
 }
 
 fn redirect_response(location: &str) -> NetworkHttpResponse {
+    redirect_with_status(302, location)
+}
+
+fn redirect_with_status(status: u16, location: &str) -> NetworkHttpResponse {
     NetworkHttpResponse {
-        status: 302,
+        status,
         headers: vec![("location".to_string(), location.to_string())],
         body: vec![],
         usage: NetworkUsage::default(),
     }
+}
+
+fn redirect_test_egress(
+    transport: ScriptedTransport,
+) -> PolicyNetworkHttpEgress<ScriptedTransport, StaticResolver> {
+    PolicyNetworkHttpEgress::new_with_resolver(
+        transport,
+        StaticResolver::new(vec![IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))]),
+    )
 }
 
 fn ok_response(body: &str) -> NetworkHttpResponse {

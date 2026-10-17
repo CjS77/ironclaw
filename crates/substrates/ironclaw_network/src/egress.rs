@@ -133,8 +133,12 @@ where
             // so an untrusted `Location` can never reach a host the caller's
             // network policy does not already allow. No header follows a hop, so
             // a host-injected credential can never travel off its audience host
-            // — see `clear_headers_for_next_hop`.
-            if redirects_remaining == 0 || !is_redirect_status(response.status) {
+            // — see `clear_headers_for_next_hop`. Only GET and HEAD follow, so no
+            // request body is ever resent (see `follows_redirects`).
+            if redirects_remaining == 0
+                || !is_redirect_status(response.status)
+                || !follows_redirects(request.method)
+            {
                 return Ok(response);
             }
             let Some(location) = find_header(&response.headers, "location") else {
@@ -148,13 +152,8 @@ where
                 }
             })?;
             redirects_remaining -= 1;
+            // GET and HEAD keep their method on every redirect status.
             request.url = next_url;
-            // 303 (and, following prevailing client behavior, 301/302) drop to a
-            // bodyless GET; 307/308 preserve the method and body.
-            if !preserves_method_on_redirect(response.status) {
-                request.method = NetworkMethod::Get;
-                request.body = Vec::new();
-            }
             clear_headers_for_next_hop(&mut request.headers);
         }
     }
@@ -169,8 +168,14 @@ fn is_redirect_status(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
-fn preserves_method_on_redirect(status: u16) -> bool {
-    matches!(status, 307 | 308)
+/// Whether a request with this method follows a redirect. Only GET and HEAD
+/// do; any other method gets the redirect response back, `Location` included,
+/// and the caller decides. Following would mean resending the body (a 307/308
+/// repeats it), and the body can carry a host-injected credential that must
+/// not reach another origin; it would also need the body's headers and the
+/// egress limit carried across hops.
+fn follows_redirects(method: NetworkMethod) -> bool {
+    matches!(method, NetworkMethod::Get | NetworkMethod::Head)
 }
 
 /// Drops every header before the next redirect hop.

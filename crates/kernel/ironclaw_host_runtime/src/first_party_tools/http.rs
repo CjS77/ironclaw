@@ -75,7 +75,7 @@ impl HttpSaveMode {
 pub(super) fn manifest() -> Result<CapabilityManifest, ExtensionError> {
     http_manifest(
         HTTP_CAPABILITY_ID,
-        "Perform an outbound HTTP request through host egress. The host follows redirects, checking each new host against the network policy; a redirect to a host the policy does not allow fails the request.",
+        "Perform an outbound HTTP request through host egress. The host follows redirects for GET and HEAD, checking each new host against the network policy; a redirect to a host the policy does not allow fails the request. Any other method gets the redirect response back, with its Location, instead of following it.",
         vec![EffectKind::DispatchCapability, EffectKind::Network],
     )
 }
