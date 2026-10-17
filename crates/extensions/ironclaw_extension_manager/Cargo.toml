@@ -91,6 +91,7 @@ ironclaw_resources = { path = "../../kernel/ironclaw_resources", features = ["te
 ironclaw_safety = { path = "../../substrates/ironclaw_safety" }
 ironclaw_triggers = { path = "../../domains/ironclaw_triggers" }
 ironclaw_trust = { path = "../../kernel/ironclaw_trust" }
+rand = "0.10"
 secrecy = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }

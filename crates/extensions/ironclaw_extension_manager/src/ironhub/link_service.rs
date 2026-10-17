@@ -557,14 +557,23 @@ mod tests {
 
     use super::*;
 
-    const SHARED_KEY: &str = "ihub_sk_LinkServiceTestKey0000000000000000000000000";
+    /// Test-only IronHub shared key. It is random per test process, so there is
+    /// no hard-coded key, and `sign()` and `shared_key()` always agree.
+    fn shared_key_text() -> &'static str {
+        static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        KEY.get_or_init(|| {
+            let mut bytes = [0u8; 32];
+            rand::fill(&mut bytes[..]);
+            format!("ihub_sk_{}", hex::encode(bytes))
+        })
+    }
 
     fn shared_filesystem() -> Arc<dyn RootFilesystem> {
         Arc::new(InMemoryBackend::new())
     }
 
     fn shared_key() -> IronhubSharedKey {
-        IronhubSharedKey::new(SHARED_KEY).expect("test shared key")
+        IronhubSharedKey::new(shared_key_text()).expect("test shared key")
     }
 
     fn caller(user_id: &str) -> ProductSurfaceCaller {
@@ -619,7 +628,8 @@ mod tests {
     }
 
     fn sign(payload: &str) -> String {
-        let mut mac = Hmac::<Sha256>::new_from_slice(SHARED_KEY.as_bytes()).expect("HMAC key");
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(shared_key_text().as_bytes()).expect("HMAC key");
         mac.update(payload.as_bytes());
         hex::encode(mac.finalize().into_bytes())
     }
