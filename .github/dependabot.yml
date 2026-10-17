@@ -63,3 +63,56 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # WebUI frontends. vitest, its browser provider (@vitest/browser-playwright)
+  # and Storybook's vitest addon only work as a matched set: the provider pins
+  # an exact vitest version and @storybook/addon-vitest declares which vitest
+  # majors it supports. Bumping one without the others breaks `pnpm test` at
+  # startup (cdcc9a718 moved vitest to 5.0.5 alone). The `vitest-storybook`
+  # group moves the whole family in one PR.
+  #
+  # Security updates only bump the vulnerable package, so the security group
+  # combines fixes within the family but cannot drag the rest along; the
+  # version-update group is what keeps them in lockstep.
+  - package-ecosystem: npm
+    directories:
+      - "/crates/product/ironclaw_webui/frontend"
+      - "/crates/product/ironclaw_webui/naomi_fe"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      vitest-storybook:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "storybook"
+          - "@storybook/*"
+          - "@chromatic-com/storybook"
+      vitest-storybook-security:
+        applies-to: security-updates
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "storybook"
+          - "@storybook/*"
+          - "@chromatic-com/storybook"
+      everything-else:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "storybook"
+          - "@storybook/*"
+          - "@chromatic-com/storybook"
+      everything-else-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "storybook"
+          - "@storybook/*"
+          - "@chromatic-com/storybook"
