@@ -107,7 +107,11 @@ Re-verify the module list: `grep -n 'ID,' crates/extensions/ironclaw_extension_s
    `docs/internal/reborn/contracts/network.md` §3.2), and
    `[channel.presentation]`. Operator/deployment setup fields are a separate
    top-level `[admin_configuration]` section (there is no `[channel.config]`);
-   the host renders the generic form from it.
+   the host renders the generic form from it. A channel whose inbound
+   messages must be stored for the owner rather than start turns declares
+   `[channel.intake]` (intake mode; rules in
+   `docs/internal/reborn/contracts/extensions.md`; fixture
+   `tests/fixtures/extensions/acme-intake/manifest.toml`).
 2. Direction is the `inbound`/`outbound` bools, which project to
    `channel { inbound, outbound }` on the extensions wire. A run's own final
    reply is never an agent decision — it rides the runtime-owned delivery

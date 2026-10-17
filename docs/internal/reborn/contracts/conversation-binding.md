@@ -110,6 +110,16 @@ Reply-target binding is separate from external ingress identity. This contract b
 
 This is not the final durable transcript store. The conversation contract stores accepted-message refs and content refs; durable raw transcript content and lazy v1 transcript migration remain downstream of the transcript/thread storage boundary (#3204).
 
+**Intake-mode channels bypass this contract entirely.** A channel that
+declares `[channel.intake]` (see [`extensions.md`](extensions.md)) never
+reaches conversation binding: the generic channel host registers an intake
+sink instead of the product workflow, so no binding, pairing check
+(`BindingRequired` included), actor resolution, idempotency-ledger entry, or
+turn submission happens for its messages. Each verified message is stored as
+an intake item in `ironclaw_intake`, which owns its own deduplication by
+`(installation, external event id)`. The rules below apply only to channels
+that admit messages into the product workflow.
+
 ---
 
 ## 4. Required semantics

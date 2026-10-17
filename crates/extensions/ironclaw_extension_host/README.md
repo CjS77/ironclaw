@@ -36,7 +36,10 @@ Grouped by responsibility (all modules are `pub`; see `src/lib.rs`):
   bindings that `egress.rs` rewrites logical endpoint URLs onto), identity + actor resolution (`ProviderIdentityActorResolver`,
   `provider_identity.rs`), and the pairing / connection / config / admin-config
   service cores (`channel_pairing*`, `channel_connection.rs`,
-  `channel_config.rs`, `admin_configuration_*`).
+  `channel_config.rs`, `admin_configuration_*`). Intake-mode channels
+  (`[channel.intake]`) get the intake sink (`channel_intake.rs`) instead of
+  the product workflow: verified messages become `ironclaw_intake` items and
+  never start a turn.
 - **Catalog** — `AvailableExtensionCatalog` (`available_extensions.rs`) + import:
   read by boot-time restore and the registration pipeline, which is why it
   lives here and not in the manager.
