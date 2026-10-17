@@ -380,6 +380,13 @@ header = "X-Vendor-Secret-Token"
         .expect("shared secret recipe parses")
     }
 
+    /// Fresh random HMAC key so test keys are never compile-time constants.
+    pub(super) fn random_secret() -> Vec<u8> {
+        let mut key = vec![0u8; 32];
+        rand::fill(&mut key[..]);
+        key
+    }
+
     pub(super) fn candidate(id: &str, secret: &[u8]) -> VerificationCandidate {
         VerificationCandidate {
             installation_id: id.to_string(),
@@ -691,10 +698,12 @@ signed_payload = [ { body = true } ]
 
     #[test]
     fn hmac_recipe_resolves_exactly_one_of_multiple_candidates() {
+        let secret_a = random_secret();
+        let secret_b = random_secret();
         let body = b"{}";
         let timestamp = NOW.to_string();
         let recipe = acme_recipe();
-        let signature = sign_acme(b"secret-b", &timestamp, body);
+        let signature = sign_acme(&secret_b, &timestamp, body);
         let entries = headers(&[
             ("X-Acme-Signature", &signature),
             ("X-Acme-Request-Timestamp", &timestamp),
@@ -707,8 +716,8 @@ signed_payload = [ { body = true } ]
             body,
             NOW,
             &[
-                candidate("install-a", b"secret-a"),
-                candidate("install-b", b"secret-b"),
+                candidate("install-a", &secret_a),
+                candidate("install-b", &secret_b),
             ],
         )
         .expect("single matching candidate resolves");
@@ -722,8 +731,8 @@ signed_payload = [ { body = true } ]
                 body,
                 NOW,
                 &[
-                    candidate("install-b1", b"secret-b"),
-                    candidate("install-b2", b"secret-b"),
+                    candidate("install-b1", &secret_b),
+                    candidate("install-b2", &secret_b),
                 ],
             )
             .unwrap_err(),
@@ -732,7 +741,7 @@ signed_payload = [ { body = true } ]
 
         // Over the fixed bound → rejected before any HMAC.
         let too_many: Vec<_> = (0..=MAX_VERIFICATION_CANDIDATES)
-            .map(|index| candidate(&format!("install-{index}"), b"secret-b"))
+            .map(|index| candidate(&format!("install-{index}"), &secret_b))
             .collect();
         assert_eq!(
             verify_recipe(
