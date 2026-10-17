@@ -676,6 +676,20 @@ impl LifecycleIsolationFixture {
         self.bob_id.clone()
     }
 
+    /// Fixed role label for assertion messages, so user identifiers
+    /// never end up in test output.
+    fn role_label(&self, user_id: &UserId) -> &'static str {
+        if *user_id == self.operator_id {
+            "operator"
+        } else if *user_id == self.alice_id {
+            "Alice"
+        } else if *user_id == self.bob_id {
+            "Bob"
+        } else {
+            "unknown member"
+        }
+    }
+
     fn member_router(&self, user_id: UserId) -> Router {
         mount_webui_v2_router(Arc::clone(&self.webui), self.caller(user_id))
     }
@@ -704,23 +718,23 @@ impl LifecycleIsolationFixture {
     }
 
     async fn assert_user_phase(&self, user_id: UserId, expected: &str) {
-        let label = user_id.as_str().to_string();
+        let label = self.role_label(&user_id);
         let (status, body) =
             get_json(self.member_router(user_id), "/api/webchat/v2/extensions").await;
         assert_eq!(status, StatusCode::OK, "{label} list response: {body}");
         assert_eq!(
-            extension_entry(&body, EXTENSION_ID, &label)["installation_state"],
+            extension_entry(&body, EXTENSION_ID, label)["installation_state"],
             expected,
             "{label} must independently remain {expected}: {body}"
         );
     }
 
     async fn assert_user_absent(&self, user_id: UserId) {
-        let label = user_id.as_str().to_string();
+        let label = self.role_label(&user_id);
         let (status, body) =
             get_json(self.member_router(user_id), "/api/webchat/v2/extensions").await;
         assert_eq!(status, StatusCode::OK, "{label} list response: {body}");
-        assert_extension_absent(&body, EXTENSION_ID, &label);
+        assert_extension_absent(&body, EXTENSION_ID, label);
     }
 
     async fn shutdown(self) {
