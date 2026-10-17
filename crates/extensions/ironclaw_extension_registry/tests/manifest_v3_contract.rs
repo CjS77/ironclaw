@@ -64,6 +64,36 @@ fn acme_record() -> ExtensionManifestRecord {
     parse_v3(ACME_MANIFEST).expect("acme fixture manifest must parse")
 }
 
+const ACME_INTAKE_MANIFEST: &str =
+    include_str!("../../../../tests/fixtures/extensions/acme-intake/manifest.toml");
+
+/// An intake-mode channel parses through the single entry point and keeps
+/// its intake declaration on the resolved record; one that also declares a
+/// reply half is refused, because an intake message never reaches the agent.
+#[test]
+fn intake_channel_manifest_resolves_and_refuses_a_reply_half() {
+    let record = parse_v3(ACME_INTAKE_MANIFEST).expect("intake fixture parses");
+    let channel = record
+        .resolved()
+        .channel
+        .as_ref()
+        .expect("intake fixture declares a channel");
+    assert!(channel.is_intake());
+    assert!(channel.supports_inbound());
+    assert!(!channel.supports_outbound());
+
+    let with_reply = ACME_INTAKE_MANIFEST.replace(
+        "[channel.intake]\n",
+        "[channel.intake]\n\n[channel.reply]\ntransport = \"message\"\n",
+    );
+    assert_ne!(with_reply, ACME_INTAKE_MANIFEST, "fixture edit applied");
+    let error = parse_v3(&with_reply).expect_err("intake with a reply half is refused");
+    assert!(
+        error.contains("intake"),
+        "error names the intake rule: {error}"
+    );
+}
+
 // arch-exempt: large_file, manifest-v3 cases remain one conformance suite pending fixture split, plan #7477
 // Parsing the documented v3 shape
 // ---------------------------------------------------------------------------

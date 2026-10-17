@@ -338,6 +338,11 @@ pub struct GenericChannelHostDeps {
     /// OAuth-strategy channel's `connect_required` notice; `None` keeps that
     /// notice at its static, link-free manifest text.
     pub connect_link_base_url: Option<String>,
+    /// Where intake-mode channels (`[channel.intake]`) store their verified
+    /// inbound messages: the write half of the intake store only. Items
+    /// belong to the deployment operator (`identity.operator_user_id`), the
+    /// same user the operator actor policy resolves to.
+    pub intake_recorder: Arc<dyn ironclaw_intake::IntakeRecorder>,
 }
 
 /// What the assembly last reconciled for one extension id.
@@ -345,8 +350,9 @@ enum ReconciledChannel {
     /// Assembly-built generic graph for exactly this channel source.
     Generic {
         source: HostedChannelSource,
+        /// `None` for an intake channel, which binds no conversation.
         #[cfg(any(test, feature = "test-support"))]
-        conversation_binding: Arc<dyn ProductBindingResolver>,
+        conversation_binding: Option<Arc<dyn ProductBindingResolver>>,
         /// The post-admission observer registered with the sink (test seam:
         /// gate-resolution acks arriving from non-channel surfaces are
         /// injected through the SAME observer instance the sink drives).
@@ -412,7 +418,7 @@ impl HostedChannelSource {
 struct BuiltGenericChannelGraph {
     registration: ChannelIngressRegistration,
     #[cfg(any(test, feature = "test-support"))]
-    conversation_binding: Arc<dyn ProductBindingResolver>,
+    conversation_binding: Option<Arc<dyn ProductBindingResolver>>,
     #[cfg(any(test, feature = "test-support"))]
     observer: Option<Arc<dyn PostAdmissionObserver>>,
 }
@@ -692,6 +698,25 @@ impl GenericChannelHostAssembly {
             installation_id: source.installation_id().to_string(),
         });
 
+        // Intake mode: same verification, but no product workflow, command
+        // roles, actor resolution, pairing gate, DM backfill, or delivery
+        // observer. Every verified message becomes an intake item.
+        if channel.is_intake() {
+            return Ok(Some(BuiltGenericChannelGraph {
+                registration: crate::channel_intake::intake_channel_registration(
+                    Arc::clone(&self.deps.intake_recorder),
+                    &self.deps.identity,
+                    source.extension_id(),
+                    secrets,
+                    configuration,
+                )?,
+                #[cfg(any(test, feature = "test-support"))]
+                conversation_binding: None,
+                #[cfg(any(test, feature = "test-support"))]
+                observer: None,
+            }));
+        }
+
         // Channel-command admission's admin-audience gate: the same
         // per-extension provider identity the workflow's actor resolver uses
         // below, so the actor a command's role is resolved for is always the
@@ -775,11 +800,12 @@ impl GenericChannelHostAssembly {
             configuration,
             sink: Arc::clone(&sink) as Arc<dyn ironclaw_extension_host::ingress::InboundSink>,
             drain: Some(sink as Arc<dyn ChannelIngressDrain>),
+            keeps_reply_context: true,
         };
         Ok(Some(BuiltGenericChannelGraph {
             registration,
             #[cfg(any(test, feature = "test-support"))]
-            conversation_binding: graph.binding,
+            conversation_binding: Some(graph.binding),
             #[cfg(any(test, feature = "test-support"))]
             observer: observer.map(|observer| observer as Arc<dyn PostAdmissionObserver>),
         }))
@@ -978,7 +1004,7 @@ impl GenericChannelHostAssembly {
             ReconciledChannel::Generic {
                 conversation_binding,
                 ..
-            } => Some(Arc::clone(conversation_binding)),
+            } => conversation_binding.clone(),
             _ => None,
         }
     }

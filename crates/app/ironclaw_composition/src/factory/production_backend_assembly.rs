@@ -487,6 +487,8 @@ pub(super) async fn build_backend_production(
     );
     let outbound_stores = build_outbound_stores(Arc::clone(&stores.filesystem));
     let notification_inbox = build_notification_inbox(Arc::clone(&stores.filesystem));
+    let intake_store =
+        crate::intake_store_assembly::build_intake_store(Arc::clone(&stores.filesystem));
     let outbound_delivery_targets =
         Arc::new(crate::outbound::MutableOutboundDeliveryTargetRegistry::default());
     // arch-exempt: large_file, channel assembly stays co-located pending factory decomposition, plan #7477
@@ -1432,6 +1434,7 @@ pub(super) async fn build_backend_production(
         skill_auto_activate_learned: Arc::clone(&skill_auto_activate_learned),
         outbound_state: outbound_stores.outbound_state,
         notification_inbox,
+        intake_store,
         reply_attachment_intents: outbound_stores.reply_attachment_intents,
         delivered_gate_routes: outbound_stores.delivered_gate_routes,
         triggered_run_delivery: outbound_stores.triggered_run_delivery,

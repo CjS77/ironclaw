@@ -662,6 +662,7 @@ pub struct RebornRuntime {
     pub(crate) system_extensions_lifecycle_mounts: MountView,
     pub(crate) outbound_preferences: Arc<dyn CommunicationPreferenceRepository>,
     pub(crate) notification_inbox: Arc<dyn ironclaw_notifications::NotificationInboxStorePort>,
+    pub(crate) intake_store: Arc<crate::intake_store_assembly::ComposedIntakeStore>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) outbound_state: OutboundTestStores,
     #[cfg(any(test, feature = "test-support"))]
@@ -1218,6 +1219,7 @@ impl RebornRuntime {
             delivered_gate_routes: Arc::clone(&self.delivered_gate_routes),
             outbound_preferences: Arc::clone(&self.outbound_preferences),
             notification_inbox: Arc::clone(&self.notification_inbox),
+            intake_store: Arc::clone(&self.intake_store),
             triggered_delivery_store: Arc::clone(&self.triggered_run_delivery),
             outbound_delivery_targets: Arc::clone(self.outbound_delivery_target_registry.as_ref()?)
                 as Arc<dyn ironclaw_outbound::OutboundDeliveryTargetProvider>,
@@ -4795,6 +4797,7 @@ pub(crate) async fn build_runtime_with_resource_governor(
         system_extensions_lifecycle_mounts: services.system_extensions_lifecycle_mounts.clone(),
         outbound_preferences: services.outbound_preferences.clone(),
         notification_inbox: services.notification_inbox.clone(),
+        intake_store: Arc::clone(&services.intake_store),
         #[cfg(any(test, feature = "test-support"))]
         outbound_state: OutboundTestStores {
             state: services.outbound_state.clone(),

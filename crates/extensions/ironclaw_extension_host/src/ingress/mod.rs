@@ -26,7 +26,8 @@ pub use router::{
     ExtensionIngressRouter, ExtensionIngressRouterDeps, InboundAdmission, InboundAdmissionAck,
     InboundSink, InboundSinkError, IngressConfigurationPort, IngressPortError,
     IngressRateLimitConfig, IngressRequest, IngressResponse, IngressRouterConfig,
-    IngressSecretsPort, ReplyContextKey, ReplyContextStore, canonical_ingress_path,
+    IngressSecretsPort, OwnerActivityAdmission, ReplyContextKey, ReplyContextStore,
+    canonical_ingress_path,
 };
 pub use verifier::{
     IngressHeaders, MAX_VERIFICATION_CANDIDATES, VerificationCandidate, VerificationFailure,
