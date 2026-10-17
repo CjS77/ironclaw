@@ -1,7 +1,7 @@
 
 # `crates/domains/` — typed record/service domains
 
-**Layer(s):** substrates · **Crates:** 14 — ironclaw_threads, ironclaw_conversations, ironclaw_triggers, ironclaw_memory, ironclaw_skills, ironclaw_auth, ironclaw_attachments, ironclaw_extractors, ironclaw_identity, ironclaw_llm, ironclaw_trace_commons, ironclaw_web_app, ironclaw_notifications, ironclaw_outbound · **Security posture:** typed record and service authorities behind the kernel — record grammar and invariants only, never an authorization, approval, or resource decision; two crates mint trust narrowly (outbound — sealed constructors; triggers — ratchet-pinned minting), and one is a credential-custody domain (auth).
+**Layer(s):** substrates · **Crates:** 15 — ironclaw_threads, ironclaw_conversations, ironclaw_triggers, ironclaw_memory, ironclaw_skills, ironclaw_auth, ironclaw_attachments, ironclaw_extractors, ironclaw_identity, ironclaw_llm, ironclaw_trace_commons, ironclaw_web_app, ironclaw_notifications, ironclaw_intake, ironclaw_outbound · **Security posture:** typed record and service authorities behind the kernel — record grammar and invariants only, never an authorization, approval, or resource decision; two crates mint trust narrowly (outbound — sealed constructors; triggers — ratchet-pinned minting), and one is a credential-custody domain (auth).
 
 *This document specifies the target architecture as designed. Dispositions, migration constraints, evidence, and open decisions live in [PROPOSAL.md](../PROPOSAL.md), [CHECKLIST.md](../CHECKLIST.md), and [PLAN.md](../PLAN.md).*
 
@@ -20,12 +20,13 @@ crates/domains/
 ├── ironclaw_trace_commons    Trace Commons client & redaction
 ├── ironclaw_web_app          Web Push records, encryption & request planning
 ├── ironclaw_notifications    durable metadata-only user notification inbox
+├── ironclaw_intake           durable intake items from intake-mode channels
 └── ironclaw_outbound         outbound authority: sealed grants, at-most-once
 ```
 
 ## Role
 
-`crates/domains/` owns IronClaw Reborn's typed business records: sessions and threads, scheduled triggers, memory documents, skills, credentials, attachments, projects, identity, model providers, trace submissions, browser push records, notification inbox state, and outbound delivery state. Each crate in the family owns exactly one record grammar and the invariants that keep it valid — uniqueness, idempotency, scope isolation, compare-and-swap ordering — and exposes a typed service contract over `ScopedFilesystem` that the kernel and product layers wire against.
+`crates/domains/` owns IronClaw Reborn's typed business records: sessions and threads, scheduled triggers, memory documents, skills, credentials, attachments, projects, identity, model providers, trace submissions, browser push records, notification inbox state, intake items, and outbound delivery state. Each crate in the family owns exactly one record grammar and the invariants that keep it valid — uniqueness, idempotency, scope isolation, compare-and-swap ordering — and exposes a typed service contract over `ScopedFilesystem` that the kernel and product layers wire against.
 
 A domains crate never decides whether an effect may happen. Authorization, approval, and resource decisions are exhausted by the kernel before a domains-family call is ever reached. A domains crate answers "what does this record mean, and how do I keep it correct," never "is this caller allowed to do this."
 

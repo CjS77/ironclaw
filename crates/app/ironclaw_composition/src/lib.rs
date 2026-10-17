@@ -435,6 +435,9 @@ const PER_USER_ALIASES: &[&str] = &[
     "/authorization",
     "/outbound",
     "/notifications",
+    // Intake items: verified inbound messages an intake-mode channel stores
+    // for the account owner. Retained forever; status moves forward instead.
+    "/intake",
     // The web-app channel's enrollment store. The alias keeps its pre-rename
     // `web-push` spelling on purpose: it resolves to a PHYSICAL per-user
     // subpath (`/tenants/<t>/users/<u>/web-push`), so renaming it would
@@ -506,10 +509,12 @@ fn invocation_mount_view_for_segments(
     let mut grants = Vec::with_capacity(PER_USER_ALIASES.len() + 4);
     for alias in PER_USER_ALIASES {
         let target = format!("{tenant_user_prefix}{alias}");
-        let permissions = if matches!(*alias, "/notifications" | "/suggestions") {
-            // Suggestions are retained model output, and notifications expose
-            // only typed lifecycle transitions. Neither store performs raw
-            // deletion, so do not grant filesystem deletion authority.
+        let permissions = if matches!(*alias, "/notifications" | "/suggestions" | "/intake") {
+            // Suggestions are retained model output, notifications expose
+            // only typed lifecycle transitions, and intake items are retained
+            // inbound messages whose status only moves forward. None of these
+            // stores performs raw deletion, so do not grant filesystem
+            // deletion authority.
             MountPermissions::read_write()
         } else {
             MountPermissions::read_write_list_delete()

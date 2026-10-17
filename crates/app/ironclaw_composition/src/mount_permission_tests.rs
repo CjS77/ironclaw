@@ -47,6 +47,33 @@ async fn invocation_mount_view_denies_notification_deletion() {
 }
 
 #[tokio::test]
+async fn invocation_mount_view_grants_intake_items_but_denies_their_deletion() {
+    let view = invocation_mount_view(&sample_scope()).unwrap();
+    let (resolved, grant) = view
+        .resolve_with_grant(&ScopedPath::new("/intake/items/item.json").unwrap())
+        .unwrap();
+    assert_eq!(
+        resolved.as_str(),
+        "/tenants/tenant-a/users/user-1/intake/items/item.json",
+        "intake items live in the owning user's own subtree"
+    );
+    assert!(grant.permissions.read);
+    assert!(grant.permissions.write);
+    assert!(grant.permissions.list);
+    assert!(!grant.permissions.delete);
+
+    let filesystem = ScopedFilesystem::new(Arc::new(InMemoryBackend::new()), invocation_mount_view);
+    let error = filesystem
+        .delete(
+            &sample_scope(),
+            &ScopedPath::new("/intake/items/item.json").unwrap(),
+        )
+        .await
+        .expect_err("intake items are retained; status moves forward instead");
+    assert!(matches!(error, FilesystemError::PermissionDenied { .. }));
+}
+
+#[tokio::test]
 async fn process_journal_migration_mount_is_system_only_and_read_only() {
     let root = Arc::new(InMemoryBackend::new());
     let scoped = wrap_process_journal_scoped(root);

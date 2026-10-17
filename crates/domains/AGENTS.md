@@ -1,8 +1,8 @@
 # `crates/domains/` — one crate per business-record grammar, no authority decisions
 
-**Layer(s):** `substrates` (all 14 manifests declare it; checked by
+**Layer(s):** `substrates` (all 15 manifests declare it; checked by
 `reborn_workspace_crates_declare_layers_and_follow_layer_matrix`) ·
-**Crates:** 14 · **May depend on:** `contracts/`, `substrates/`, `events/`,
+**Crates:** 15 · **May depend on:** `contracts/`, `substrates/`, `events/`,
 plus five inventoried in-family edges (below) · **Depended on by:** `kernel/`,
 `loop/`, `extensions/`, `product/`, `app/` — every tier above wires against
 these contracts.
@@ -29,6 +29,7 @@ no other crate in the family may acquire either property.
 | [`ironclaw_conversations`](./ironclaw_conversations) | External↔canonical conversation *binding*, actor pairing, and inbound idempotency; turn submission only via the `ConversationTurnSubmitter` port | Binding an external conversation/actor to a canonical thread, or accepting an inbound message exactly once |
 | [`ironclaw_extractors`](./ironclaw_extractors) | Pure bytes→text extraction (PDF/OOXML/legacy Office/RTF/text), bomb-capped, with a content-free failure `Display` | Turning file bytes into text, with no I/O and no knowledge of the source |
 | [`ironclaw_identity`](./ironclaw_identity) | External identity → stable `UserId` minting, the user profile/directory, and the `projects` records + access-gating service | Resolving who a login or actor is, admin user management, or project membership/ACL |
+| [`ironclaw_intake`](./ironclaw_intake) | Durable intake items: verified inbound messages an intake-mode channel stores for the deployment owner instead of starting a turn, with their owner-reply status history — never deleted | Changing what an intake item records, how it is deduplicated, listed, or marked handled |
 | [`ironclaw_llm`](./ironclaw_llm) | The `LlmProvider` contract, one adapter per model vendor, provider auth/sessions, registry, reliability decorators, recording — the family's vendor cone | Adding a model provider, changing provider selection/reliability, or trace recording of model calls |
 | [`ironclaw_memory`](./ironclaw_memory) | The provider-neutral `MemoryService` contract, memory path/scope grammar, prompt-write-safety vocabulary, and the shared conformance suite | Changing what memory *means*; provider implementations live in `extensions/packages/memory-native` and `…/mem0` |
 | [`ironclaw_notifications`](./ironclaw_notifications) | Durable, metadata-only user notification inbox records and lifecycle over `ScopedFilesystem` | Changing notification identity, pagination, retention bounds, or read/resolved/archived state |
@@ -104,8 +105,9 @@ crate path is given.
   (incl. the pinned *absence* of `ironclaw_safety` and `ironclaw_threads`),
   `ironclaw_outbound`, `ironclaw_threads`, `ironclaw_triggers` (incl. the
   pinned absence of `ironclaw_filesystem`), and armed **allowlists** for
-  `ironclaw_identity` (`{host_api, filesystem, product_contracts}`) and
-  `ironclaw_memory` (`{host_api, prompt_envelope}`).
+  `ironclaw_identity` (`{host_api, filesystem, product_contracts}`),
+  `ironclaw_memory` (`{host_api, prompt_envelope}`), and `ironclaw_intake`
+  (`{host_api, filesystem, extension_contracts}`).
 - **In-family edges are a closed, inventoried set** — exactly five today:
   `conversations→triggers`, `attachments→extractors`, `attachments→threads`,
   `outbound→attachments`, `trace_commons→llm`.

@@ -102,6 +102,7 @@ Frozen V1 canonical virtual roots (aligned with `storage-placement.md`):
 /processes
 /authorization
 /outbound
+/intake
 /run-state
 /approvals
 /threads
@@ -130,6 +131,7 @@ Recommended meaning:
 | `/processes` | background-process records and result/output blobs (consumer-store mount alias under `ironclaw_processes`) |
 | `/authorization` | capability lease records (consumer-store mount alias under `ironclaw_authorization`) |
 | `/outbound` | outbound delivery policy/subscription/attempt records (consumer-store mount alias under `ironclaw_outbound`) |
+| `/intake` | intake items stored by intake-mode channels (consumer-store mount alias under `ironclaw_intake`); read, write, and list, never delete |
 | `/run-state` | read-only compatibility input for invocation lifecycle migration into `/processes` |
 | `/approvals` | approval-request lifecycle records owned by `ironclaw_approvals` |
 | `/threads` | canonical session-thread and transcript records (consumer-store mount alias under `ironclaw_threads`) |

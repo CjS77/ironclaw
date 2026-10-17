@@ -256,6 +256,8 @@ crates/
 │   │                                                            request planning (added 2026-08-08, browser channel)
 │   ├── ironclaw_notifications        ▣ [substrates] (NEW)       durable metadata-only user notification inbox
 │   │                                                            (added 2026-08-18, notification inbox)
+│   ├── ironclaw_intake               ▣ [substrates] (NEW)       durable intake items from intake-mode channels
+│   │                                                            (added 2026-10-16, untrusted inbox)
 │   └── ironclaw_outbound             ▣ [substrates]             metadata-only outbound policy/state (sealed grants)
 ├── kernel/                           ▢ the authority perimeter — nine crates, steady-state reached
 │                                       (the transitional tenth, ironclaw_run_state, was deleted by #6696 on 2026-07-29)
