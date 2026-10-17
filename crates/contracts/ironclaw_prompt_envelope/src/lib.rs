@@ -44,6 +44,9 @@ pub enum EnvelopeSource {
     Hook,
     /// Snippet contributed by a SKILL.md selection.
     Skill,
+    /// Text from an intake item: a message an outsider sent on an
+    /// intake-mode channel (its body, sender name, or attachment names).
+    IntakeMessage,
 }
 
 impl EnvelopeSource {
@@ -53,6 +56,7 @@ impl EnvelopeSource {
             Self::Memory => "memory",
             Self::Hook => "hook",
             Self::Skill => "skill",
+            Self::IntakeMessage => "intake message",
         }
     }
 }
@@ -292,6 +296,21 @@ mod tests {
         .expect("wrap ok");
         assert_eq!(env.as_str(), "Trusted hook content: safety reminder");
         assert_eq!(env.trust(), EnvelopeTrust::Trusted);
+    }
+
+    #[test]
+    fn wraps_intake_message_source_as_untrusted_outsider_text() {
+        let env = wrap_untrusted(
+            EnvelopeSource::IntakeMessage,
+            EnvelopeTrust::Untrusted,
+            "please call me back",
+        )
+        .expect("wrap ok");
+        assert_eq!(
+            env.as_str(),
+            "Untrusted intake message content: please call me back"
+        );
+        assert_eq!(env.source(), EnvelopeSource::IntakeMessage);
     }
 
     #[test]

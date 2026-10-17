@@ -45,6 +45,9 @@ pub(crate) fn resolve_native_memory_input_schema_ref(reference: &str) -> Option<
 }
 
 pub(crate) fn resolve_builtin_input_schema_ref(reference: &str) -> Option<Value> {
+    if let Some(schema) = super::intake::input_schema(reference) {
+        return Some(schema);
+    }
     Some(match reference {
         "schemas/builtin/echo.input.v1.json" => json!({
             "type": "object",

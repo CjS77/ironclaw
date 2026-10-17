@@ -8,6 +8,7 @@
 mod echo;
 mod http;
 mod http_output;
+mod intake;
 mod json;
 mod memory;
 mod model_visible_output;
@@ -59,6 +60,7 @@ pub(crate) use self::schemas::{
 
 pub use echo::ECHO_CAPABILITY_ID;
 pub use http::{HTTP_CAPABILITY_ID, HTTP_SAVE_CAPABILITY_ID};
+pub use intake::{INTAKE_LIST_CAPABILITY_ID, INTAKE_READ_CAPABILITY_ID};
 pub use ironclaw_memory::{
     MEMORY_READ_CAPABILITY_ID, MEMORY_SEARCH_CAPABILITY_ID, MEMORY_TREE_CAPABILITY_ID,
     MEMORY_WRITE_CAPABILITY_ID, PROFILE_SET_CAPABILITY_ID,
@@ -260,6 +262,7 @@ pub fn builtin_first_party_package() -> Result<ExtensionPackage, ExtensionError>
                 capabilities.extend(coding_manifests()?);
                 capabilities.extend(skill_management::manifests()?);
                 capabilities.extend(trigger_management::manifests()?);
+                capabilities.extend(intake::manifests()?);
                 capabilities
             },
             // The built-in first-party package declares no manifest hooks;
@@ -524,6 +527,16 @@ pub fn register_outbound_deliver_first_party_handler(
     outbound_deliver::insert_handler(registry, delivery)
 }
 
+/// Replace the fail-closed intake-tool default with the read half of the
+/// intake store selected by composition. The tools are read-only and never
+/// receive the write half.
+pub fn register_intake_first_party_handlers(
+    registry: &mut FirstPartyCapabilityRegistry,
+    store: Arc<dyn ironclaw_intake::IntakeReader>,
+) -> Result<(), HostApiError> {
+    intake::insert_handlers(registry, store)
+}
+
 /// Replace the fail-closed reply-attachment default with the durable,
 /// run-scoped intent store selected by composition.
 pub fn register_reply_attachment_first_party_handler(
@@ -672,6 +685,7 @@ fn builtin_first_party_base_registry() -> Result<FirstPartyCapabilityRegistry, H
     );
     outbound_deliver::insert_handler(&mut registry, Arc::new(UnavailableModelChannelDelivery))?;
     reply_attachment::insert_unavailable_handler(&mut registry)?;
+    intake::insert_unavailable_handlers(&mut registry)?;
     skill_management::insert_handlers(&mut registry)?;
     Ok(registry)
 }

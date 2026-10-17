@@ -1240,6 +1240,13 @@ pub(super) async fn build_backend_production(
     .map_err(|error| RebornBuildError::InvalidConfig {
         reason: format!("explicit channel delivery handler is invalid: {error}"),
     })?;
+    ironclaw_host_runtime::register_intake_first_party_handlers(
+        &mut first_party_registry,
+        intake_store.clone(),
+    )
+    .map_err(|error| RebornBuildError::InvalidConfig {
+        reason: format!("intake read handlers are invalid: {error}"),
+    })?;
     services = services.with_first_party_capabilities(Arc::new(first_party_registry));
     let admin_configuration_resolver_for_generic = Arc::clone(&admin_configuration_resolver);
     let channel_pairing_registry;

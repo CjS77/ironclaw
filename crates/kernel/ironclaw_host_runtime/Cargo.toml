@@ -41,6 +41,8 @@ ironclaw_filesystem = { path = "../../substrates/ironclaw_filesystem" }
 ironclaw_extension_support = { path = "../../extensions/ironclaw_extension_support" }
 ironclaw_host_api = { path = "../../contracts/ironclaw_host_api" }
 ironclaw_extension_contracts = { path = "../../contracts/ironclaw_extension_contracts", version = "0.1.0" }
+# `builtin.intake.*` read the caller's intake items through the domain port.
+ironclaw_intake = { path = "../../domains/ironclaw_intake" }
 ironclaw_memory = { path = "../../domains/ironclaw_memory" }
 ironclaw_memory_native = { path = "../../extensions/packages/memory-native" }
 ironclaw_mcp = { path = "../../lanes/ironclaw_mcp" }
@@ -94,6 +96,8 @@ ironclaw_skills = { path = "../../domains/ironclaw_skills" }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 # Enables the in-memory-backed approval store constructors for tests only.
 ironclaw_approvals = { path = "../ironclaw_approvals", features = ["test-support"] }
+# The shared in-memory per-user `/intake` mount for the intake tool tests.
+ironclaw_intake = { path = "../../domains/ironclaw_intake", features = ["test-support"] }
 # Enables the in-memory-backed capability-lease store constructor for tests only.
 ironclaw_authorization = { path = "../ironclaw_authorization", features = ["test-support"] }
 # FaultInjecting decorator: drive store fault paths through the real store.

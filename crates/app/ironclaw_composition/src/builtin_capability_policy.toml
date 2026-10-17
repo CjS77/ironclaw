@@ -334,6 +334,20 @@ effects = ["dispatch_capability"]
 mounts = "ambient"
 network = "default"
 
+# Read-only access to the caller's intake items (messages stored by
+# intake-mode channels). Dispatch only; the store scopes every read.
+[[grants]]
+capability = "builtin.intake.list"
+effects = ["dispatch_capability"]
+mounts = "ambient"
+network = "default"
+
+[[grants]]
+capability = "builtin.intake.read"
+effects = ["dispatch_capability"]
+mounts = "ambient"
+network = "default"
+
 [[grants]]
 capability = "builtin.trigger_pause"
 effects = ["dispatch_capability", "external_write"]
