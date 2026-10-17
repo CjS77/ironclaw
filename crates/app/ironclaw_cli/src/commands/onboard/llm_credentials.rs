@@ -348,15 +348,16 @@ fn provision_via_menu(
     // writes below remain fallible — no prompt can fail with a secret already
     // committed. See `provision_llm_credentials`'s doc for write ordering.
     let initial_key = if entry.api_key_required {
-        let key = prompts.api_key(&canonical_provider_id)?;
-        // Defense in depth: guards every `PromptSource` impl against a blank
-        // key reaching the secret store (`StdinPromptSource` already re-prompts).
-        if key.trim().is_empty() {
-            return Err(LlmCredentialPromptError::Other(anyhow::anyhow!(
-                "LLM API key must not be blank"
-            )));
+        // Explicit match, not `?`: CodeQL counts a `?` on the key as a return
+        // value, which taints the printed onboarding summary (rust/cleartext-logging).
+        // Defense in depth: the blank arm guards every `PromptSource` impl against
+        // a blank key reaching the secret store (`StdinPromptSource` already
+        // re-prompts).
+        match prompts.api_key(&canonical_provider_id) {
+            Ok(key) if key.trim().is_empty() => return Err(blank_api_key_error()),
+            Ok(key) => Some(key),
+            Err(error) => return Err(error),
         }
-        Some(key)
     } else {
         None
     };
@@ -377,19 +378,15 @@ fn provision_via_menu(
     // are never probed — env-sourced/keyless credentials are already trusted.
     // `nearai` is `api_key_required: true` here (menu-level override), so it
     // takes this same branch like any other key-required provider.
-    let key = match initial_key {
-        Some(key) => Some(probe_and_confirm_key(
+    if let Some(mut key) = initial_key {
+        probe_and_confirm_key(
             prompts,
             probe,
             admin,
             &canonical_provider_id,
             effective_model,
-            key,
-        )?),
-        None => None,
-    };
-
-    if let Some(key) = key {
+            &mut key,
+        )?;
         let store = open_llm_key_store(store_root, store_opener)
             .map_err(LlmCredentialPromptError::Other)?;
         let provider_id_for_store = canonical_provider_id.clone();
@@ -417,13 +414,16 @@ fn provision_via_menu(
 /// anyway" answer — the loop [`provision_via_menu`] runs after the key and
 /// model prompts, before either durable write.
 ///
+/// On `Ok(())`, `candidate_key` has been updated in place to the accepted key
+/// (the key is not returned — see the CodeQL note in [`provision_via_menu`]).
+///
 /// - `probe`'s outcome (`ProviderProbeOutcome`) carries a single `ok: bool`
 ///   with no auth-vs-transport signal, so every failure (rejected key or
 ///   unreachable endpoint) takes the same branch: show the provider's
 ///   message, ask "store anyway?" ([`PromptSource::confirm`]). Yes accepts
 ///   the key as-is; no reprompts, up to `MAX_PROBE_ATTEMPTS` total entries.
 /// - Successful probe with a non-empty model list missing `effective_model`
-///   prints a warning but still returns the key (provider lists are often
+///   prints a warning but still accepts the key (provider lists are often
 ///   incomplete); an empty model list warns about nothing.
 fn probe_and_confirm_key(
     prompts: &mut dyn PromptSource,
@@ -431,8 +431,8 @@ fn probe_and_confirm_key(
     admin: &ironclaw_operator::RebornProviderAdmin,
     provider_id: &str,
     effective_model: &str,
-    mut candidate_key: String,
-) -> Result<String, LlmCredentialPromptError> {
+    candidate_key: &mut String,
+) -> Result<(), LlmCredentialPromptError> {
     const MAX_PROBE_ATTEMPTS: u8 = 3;
     let mut attempt = 1u8;
     loop {
@@ -454,13 +454,13 @@ fn probe_and_confirm_key(
                     outcome.models.len()
                 );
             }
-            return Ok(candidate_key);
+            return Ok(());
         }
 
         println!("{}", outcome.message);
         let question = format!("Could not reach {provider_id} to verify — store anyway?");
         if prompts.confirm(&question)? {
-            return Ok(candidate_key);
+            return Ok(());
         }
 
         if attempt >= MAX_PROBE_ATTEMPTS {
@@ -470,13 +470,17 @@ fn probe_and_confirm_key(
             )));
         }
         attempt += 1;
-        candidate_key = prompts.api_key(provider_id)?;
-        if candidate_key.trim().is_empty() {
-            return Err(LlmCredentialPromptError::Other(anyhow::anyhow!(
-                "LLM API key must not be blank"
-            )));
-        }
+        // Explicit match, not `?`: see the note in `provision_via_menu`.
+        *candidate_key = match prompts.api_key(provider_id) {
+            Ok(key) if key.trim().is_empty() => return Err(blank_api_key_error()),
+            Ok(key) => key,
+            Err(error) => return Err(error),
+        };
     }
+}
+
+fn blank_api_key_error() -> LlmCredentialPromptError {
+    LlmCredentialPromptError::Other(anyhow::anyhow!("LLM API key must not be blank"))
 }
 
 /// `Some` when `[llm.default]` already names a provider AND is durably
@@ -514,8 +518,11 @@ fn already_configured_outcome(
         return Ok(None);
     };
 
-    let Some(api_key_required) = provider_api_key_required(admin, &provider_id)? else {
-        return Ok(None);
+    // Explicit match, not `?`: see the note in `provision_via_menu`.
+    let api_key_required = match provider_api_key_required(admin, &provider_id) {
+        Ok(Some(required)) => required,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(error),
     };
     if !api_key_required {
         return Ok(Some(LlmCredentialProvisionOutcome::AlreadyConfigured {
@@ -1927,6 +1934,55 @@ mod tests {
                 Some("sk-3".to_string())
             ],
             "each of the three attempts must probe its own freshly-entered key"
+        );
+    }
+
+    /// A blank key entered at the probe-failure reprompt must be rejected
+    /// before it is probed or stored, and must leave config.toml untouched.
+    #[test]
+    fn provision_llm_credentials_rejects_a_blank_reprompted_api_key_without_writing() {
+        let _env_guard = crate::runtime::test_env::lock_runtime_env();
+        let _llm_env = mask_llm_env_for_test();
+        let (_tmp, context) = RebornCliContext::test_context();
+        let home = context.boot_config().home();
+        std::fs::create_dir_all(home.path()).expect("create reborn home");
+        seed_cached_master_key(home);
+
+        let mut prompts = ScriptedKeyPromptSource {
+            provider: "openai",
+            keys: std::collections::VecDeque::from(["sk-bad", "   "]),
+            confirms: std::collections::VecDeque::from([false]),
+            model: None,
+        };
+        let probe = ScriptedProbe::new(vec![probe_outcome(false, vec![], "invalid api key")]);
+        let error = provision_llm_credentials(
+            home,
+            context.boot_config(),
+            &mut prompts,
+            &EncryptedLlmKeyStoreOpener,
+            &probe,
+            false,
+        )
+        .expect_err("a blank reprompted key must error");
+        let LlmCredentialPromptError::Other(inner) = &error else {
+            panic!("expected LlmCredentialPromptError::Other, got {error:?}");
+        };
+        assert!(
+            inner.to_string().contains("must not be blank"),
+            "unexpected error: {inner}"
+        );
+        assert!(
+            !home.config_file_path().exists(),
+            "a blank reprompted key must leave config.toml untouched"
+        );
+        assert_eq!(
+            probe
+                .calls()
+                .into_iter()
+                .map(|call| call.api_key)
+                .collect::<Vec<_>>(),
+            vec![Some("sk-bad".to_string())],
+            "the blank reprompted key must never be probed"
         );
     }
 
