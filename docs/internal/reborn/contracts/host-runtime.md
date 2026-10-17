@@ -98,13 +98,14 @@ the first-party HTTP request is sent.
 
 Path-placeholder credential targets are higher risk than headers or query parameters because upstream access logs, CDN edge logs, reverse proxies, crash dumps, and `Referer` propagation routinely capture URL paths and rarely apply credential redaction to path segments. `HostHttpEgressService` therefore allows path-placeholder injection only for HTTPS URLs, requires the placeholder to appear exactly once as a full path segment, and accepts only non-empty unreserved path-segment credential values other than `.` or `..`. Capability owners should prefer header or query-param targets unless a documented upstream contract specifically requires path placement.
 
-Built-in host HTTP returns redirect responses without following them. This preserves the #3088 redirect invariant for the current V1 surface by never forwarding credentials to a redirected target. The invariant is pinned by the host-runtime runtime egress contract and the `ironclaw_network` reqwest transport redirect contract. A future redirect-following transport must re-run network policy and credential target policy for every hop before reinjecting credentials.
+Built-in host HTTP follows a redirect only for GET and HEAD, which keep their method. The host egress (`PolicyNetworkHttpEgress`) re-runs network policy and private-address denial for every hop, carries no header across a hop, and never re-injects credentials, so a credential is never forwarded to a redirected target (the #3088 redirect invariant). Any other method gets the redirect response back, `Location` included, so a request body, which can carry an injected credential, is never resent. Pinned by the host-runtime runtime egress contract and the `ironclaw_network` egress contract.
 
 First-party `builtin.http` and `builtin.http.save` classify HTTP 4xx and 5xx
 responses as model-visible `OperationFailed` capability outcomes, while preserving
 the bounded, sanitized response as diagnostic context. Transport completion alone
 is not capability success. Informational, successful, and redirect responses remain
-inspectable successful results; redirects are still never followed automatically.
+inspectable successful results; a redirect is followed only for GET and HEAD, so
+any other method returns it.
 The failure diagnostic is trimmed to the model-visible diagnostic budget
 (`MODEL_DIAGNOSTIC_MAX_BYTES`) before serialization — with headroom reserved
 for the loop-host injection fence — so `status`, `auth_hint`, and the

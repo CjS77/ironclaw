@@ -226,4 +226,4 @@ Deferred outside this issue's V1 slice:
 - arbitrary script or external MCP process ambient-network credential injection
 - external proxy/sidecar credential enforcement
 - provider-specific OAuth refresh UX
-- redirect-following credential reinjection. Current built-in host HTTP returns redirect responses without following them, so credentials are not forwarded across redirect hops.
+- redirect-following credential reinjection. Built-in host HTTP follows redirects only for GET and HEAD, carries no header across a hop and never resends a request body, so credentials are not forwarded across redirect hops.

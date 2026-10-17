@@ -96,8 +96,9 @@ pub(super) fn is_error_status(status: u16) -> bool {
 /// Transport completion is not capability success: HTTP 4xx/5xx responses are
 /// model-visible, recoverable `OperationFailed` outcomes carrying the bounded,
 /// sanitized response as diagnostic context. Informational, successful, and
-/// redirect responses stay inspectable successful results; redirects are
-/// returned, never followed. Boundary rationale: see [`is_error_status`].
+/// redirect responses stay inspectable successful results; a redirect reaches
+/// here only when it was not followed (a method other than GET or HEAD, or
+/// the hop bound was reached). Boundary rationale: see [`is_error_status`].
 pub(super) fn classify_status(
     shaped: HttpDispatchOutput,
     status: u16,
