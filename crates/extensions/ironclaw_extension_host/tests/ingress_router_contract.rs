@@ -9,8 +9,8 @@
 
 use ironclaw_attachments::DEFAULT_ATTACHMENT_BUDGETS;
 use ironclaw_extension_contracts::state::InstallationState;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -58,7 +58,20 @@ type SeenInbound = (
 
 const EXTENSION_ID: &str = "acme-chat";
 const SUFFIX: &str = "events";
-const SECRET: &[u8] = b"contract-signing-secret";
+/// Fresh random HMAC signing key, hex-encoded so it stays printable text.
+/// Tests that search adapter inputs for leaked secret text need that.
+fn random_secret() -> Vec<u8> {
+    let mut key = [0u8; 32];
+    rand::fill(&mut key[..]);
+    hex::encode(key).into_bytes()
+}
+
+/// The installation's signing secret. Generated once per test process so
+/// `sign()` and the scripted secrets port always agree.
+fn secret() -> &'static [u8] {
+    static SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+    SECRET.get_or_init(random_secret)
+}
 
 /// Channel-only manifest with a small body limit and the acme-shaped
 /// timestamped hmac recipe, so limit/verification ordering is observable.
@@ -448,7 +461,7 @@ impl Default for HarnessOptions {
             sink_mode: SinkMode::Accept,
             candidates: vec![VerificationCandidate {
                 installation_id: format!("{EXTENSION_ID}-install"),
-                secret: SECRET.to_vec(),
+                secret: secret().to_vec(),
             }],
             secrets_fail: false,
             non_secret_config: Vec::new(),
@@ -565,7 +578,7 @@ fn now_unix() -> u64 {
 }
 
 fn sign(timestamp: &str, body: &[u8]) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(SECRET).expect("hmac key");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret()).expect("hmac key");
     mac.update(format!("v0:{timestamp}:").as_bytes());
     mac.update(body);
     let digest = mac.finalize().into_bytes();
@@ -1170,7 +1183,7 @@ async fn adapter_never_observes_verification_headers_or_secret_material() {
     // Non-verification headers are forwarded.
     assert!(headers.iter().any(|(name, _)| name == "Content-Type"));
     // The secret bytes appear nowhere in the adapter's observable inputs.
-    let secret_text = String::from_utf8_lossy(SECRET).into_owned();
+    let secret_text = String::from_utf8_lossy(secret()).into_owned();
     let rendered = format!("{headers:?}{}", String::from_utf8_lossy(seen_body));
     assert!(!rendered.contains(&secret_text));
 }
@@ -1206,9 +1219,10 @@ async fn verified_installation_non_secret_config_reaches_the_adapter() {
         &[("bot_username".to_string(), "deploy_bot".to_string())]
     );
     assert!(
-        config
-            .iter()
-            .all(|(_, value)| !value.as_bytes().windows(SECRET.len()).any(|w| w == SECRET)),
+        config.iter().all(|(_, value)| !value
+            .as_bytes()
+            .windows(secret().len())
+            .any(|w| w == secret())),
         "verification secret material must never enter adapter configuration"
     );
 }
@@ -1222,11 +1236,11 @@ async fn multi_candidate_verification_resolves_exactly_one_installation() {
         candidates: vec![
             VerificationCandidate {
                 installation_id: "other-install".to_string(),
-                secret: b"other-secret".to_vec(),
+                secret: random_secret(),
             },
             VerificationCandidate {
                 installation_id: format!("{EXTENSION_ID}-install"),
-                secret: SECRET.to_vec(),
+                secret: secret().to_vec(),
             },
         ],
         ..HarnessOptions::default()
@@ -1261,11 +1275,11 @@ async fn multi_candidate_verification_resolves_exactly_one_installation() {
         candidates: vec![
             VerificationCandidate {
                 installation_id: "install-a".to_string(),
-                secret: SECRET.to_vec(),
+                secret: secret().to_vec(),
             },
             VerificationCandidate {
                 installation_id: "install-b".to_string(),
-                secret: SECRET.to_vec(),
+                secret: secret().to_vec(),
             },
         ],
         ..HarnessOptions::default()
@@ -1782,7 +1796,7 @@ async fn attachment_authority_stays_on_the_parsed_generation_during_snapshot_upg
             secrets: Arc::new(ScriptedSecrets {
                 candidates: vec![VerificationCandidate {
                     installation_id: format!("{EXTENSION_ID}-install"),
-                    secret: SECRET.to_vec(),
+                    secret: secret().to_vec(),
                 }],
                 calls: Arc::new(AtomicUsize::new(0)),
                 fail: false,
