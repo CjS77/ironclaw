@@ -902,18 +902,27 @@ mod verifier_properties {
     use super::*;
     use proptest::prelude::*;
 
-    const SECRET: &[u8] = b"acme-signing-secret";
+    /// Any non-empty installation secret. Empty secrets are rejected by the
+    /// verifier as misconfigured (fail-closed), which is pinned separately by
+    /// the example tests, so the properties range over every *valid* key.
+    fn secret_strategy() -> impl Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(any::<u8>(), 1..64)
+    }
 
     proptest! {
-        /// A correctly signed request always verifies, whatever the body.
+        /// A correctly signed request always verifies, whatever the body and
+        /// whatever the (random) installation secret.
         ///
         /// The direction that keeps the others honest: a verifier that
         /// rejected everything would satisfy every "must not accept" property
         /// below while breaking the product entirely.
         #[test]
-        fn a_correct_signature_verifies_for_any_body(body in proptest::collection::vec(any::<u8>(), 0..512)) {
+        fn a_correct_signature_verifies_for_any_body(
+            secret in secret_strategy(),
+            body in proptest::collection::vec(any::<u8>(), 0..512),
+        ) {
             let timestamp = NOW.to_string();
-            let signature = sign_acme(SECRET, &timestamp, &body);
+            let signature = sign_acme(&secret, &timestamp, &body);
             let entries = headers(&[
                 ("X-Acme-Signature", &signature),
                 ("X-Acme-Request-Timestamp", &timestamp),
@@ -923,7 +932,7 @@ mod verifier_properties {
                 &IngressHeaders::new(&entries),
                 &body,
                 NOW,
-                &[candidate("install-1", SECRET)],
+                &[candidate("install-1", &secret)],
             );
             prop_assert!(verified.is_ok(), "correctly signed body rejected: {verified:?}");
         }
@@ -935,11 +944,12 @@ mod verifier_properties {
         /// by accidentally generating a valid signature.
         #[test]
         fn an_arbitrary_signature_never_verifies(
+            secret in secret_strategy(),
             body in proptest::collection::vec(any::<u8>(), 0..256),
             forged in "\\PC{0,80}",
         ) {
             let timestamp = NOW.to_string();
-            prop_assume!(forged != sign_acme(SECRET, &timestamp, &body));
+            prop_assume!(forged != sign_acme(&secret, &timestamp, &body));
             let entries = headers(&[
                 ("X-Acme-Signature", &forged),
                 ("X-Acme-Request-Timestamp", &timestamp),
@@ -949,7 +959,7 @@ mod verifier_properties {
                 &IngressHeaders::new(&entries),
                 &body,
                 NOW,
-                &[candidate("install-1", SECRET)],
+                &[candidate("install-1", &secret)],
             );
             prop_assert!(verified.is_err(), "forged signature {forged:?} verified");
         }
@@ -960,12 +970,13 @@ mod verifier_properties {
         /// example test tampers at one place, this tampers everywhere.
         #[test]
         fn tampering_with_any_body_byte_invalidates_it(
+            secret in secret_strategy(),
             body in proptest::collection::vec(any::<u8>(), 1..256),
             index in 0usize..256,
             delta in 1u8..=255,
         ) {
             let timestamp = NOW.to_string();
-            let signature = sign_acme(SECRET, &timestamp, &body);
+            let signature = sign_acme(&secret, &timestamp, &body);
             let mut tampered = body.clone();
             let position = index % tampered.len();
             tampered[position] = tampered[position].wrapping_add(delta);
@@ -980,7 +991,7 @@ mod verifier_properties {
                 &IngressHeaders::new(&entries),
                 &tampered,
                 NOW,
-                &[candidate("install-1", SECRET)],
+                &[candidate("install-1", &secret)],
             );
             prop_assert!(
                 verified.is_err(),
@@ -1001,11 +1012,12 @@ mod verifier_properties {
         /// replaced, which is precisely the shape a prefix comparison accepts.
         #[test]
         fn a_signature_matching_only_a_prefix_never_verifies(
+            secret in secret_strategy(),
             body in proptest::collection::vec(any::<u8>(), 0..128),
             keep in 1usize..SIGNATURE_LEN,
         ) {
             let timestamp = NOW.to_string();
-            let real = sign_acme(SECRET, &timestamp, &body);
+            let real = sign_acme(&secret, &timestamp, &body);
             // The bound is the signature's own length, not a round number.
             // `keep in 1..40` left prefixes 40..67 ungenerated, so a
             // comparison truncated anywhere in that range would authenticate a
@@ -1034,7 +1046,7 @@ mod verifier_properties {
                 &IngressHeaders::new(&entries),
                 &body,
                 NOW,
-                &[candidate("install-1", SECRET)],
+                &[candidate("install-1", &secret)],
             );
             prop_assert!(
                 verified.is_err(),
@@ -1042,16 +1054,18 @@ mod verifier_properties {
             );
         }
 
-        /// A signature from the wrong secret never verifies, whatever it signs.
+        /// A signature from the wrong secret never verifies, whatever it signs
+        /// and whichever random installation secret is the right one.
         ///
         /// This is the multi-tenant case: one installation's secret must not
         /// authenticate another's traffic.
         #[test]
         fn a_signature_from_another_secret_never_verifies(
+            secret in secret_strategy(),
             body in proptest::collection::vec(any::<u8>(), 0..256),
             other_secret in proptest::collection::vec(any::<u8>(), 1..64),
         ) {
-            prop_assume!(other_secret.as_slice() != SECRET);
+            prop_assume!(other_secret != secret);
             let timestamp = NOW.to_string();
             let signature = sign_acme(&other_secret, &timestamp, &body);
             let entries = headers(&[
@@ -1063,7 +1077,7 @@ mod verifier_properties {
                 &IngressHeaders::new(&entries),
                 &body,
                 NOW,
-                &[candidate("install-1", SECRET)],
+                &[candidate("install-1", &secret)],
             );
             prop_assert!(verified.is_err(), "another installation's secret verified");
         }
