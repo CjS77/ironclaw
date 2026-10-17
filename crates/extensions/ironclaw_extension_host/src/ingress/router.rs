@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ironclaw_extension_contracts::channel::{ChannelIngressDescriptor, ChannelIngressMethod};
 use ironclaw_extension_contracts::channel_adapter::{
-    ChannelError, InboundBatchFragment, InboundOutcome, VerifiedInbound,
+    ChannelError, InboundBatchFragment, InboundOutcome, OwnerActivity, VerifiedInbound,
 };
 use ironclaw_extension_contracts::channel_adapter::{ChannelIngress, NormalizedInboundMessage};
 use ironclaw_extension_contracts::tool_adapter::{
@@ -116,6 +116,33 @@ pub trait InboundSink: Send + Sync {
         &self,
         admission: InboundAdmission,
     ) -> Result<InboundAdmissionAck, InboundSinkError>;
+
+    /// Whether the router keeps an admitted message's `reply_context` for
+    /// `extension_id` (stored host-side before admission, for source-route
+    /// replies). Every channel sink keeps it, so the default is `true`; the
+    /// one override is the per-extension registry, which answers from each
+    /// registration's `keeps_reply_context` flag (`false` for an intake
+    /// channel, which can never reply).
+    fn keeps_reply_context(&self, _extension_id: &str) -> bool {
+        true
+    }
+
+    /// The account owner acted in a conversation from their own device.
+    /// An intake channel's sink marks that conversation's open intake items
+    /// handled; every other sink acknowledges and ignores it, and says so in
+    /// its own implementation (there is deliberately no default). A sink that
+    /// dispatches to per-extension sinks must forward it.
+    async fn owner_activity(
+        &self,
+        admission: OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError>;
+}
+
+/// One verified owner activity, routed like an admission.
+pub struct OwnerActivityAdmission {
+    pub extension_id: String,
+    pub installation_id: String,
+    pub activity: OwnerActivity,
 }
 
 /// Host-side storage key for an inbound message's opaque `reply_context`:
@@ -516,6 +543,15 @@ impl ExtensionIngressRouter {
         // admission for ordinary messages, staging for provider batches.
         match outcome {
             InboundOutcome::Ignore => IngressResponse::ok(),
+            InboundOutcome::OwnerActivity(activity) => {
+                settle_owner_activity(
+                    &self.deps,
+                    binding.extension_id(),
+                    &verified.installation_id,
+                    activity,
+                )
+                .await
+            }
             InboundOutcome::Respond(response) => {
                 if response.validate().is_err() || !(200..=299).contains(&response.status) {
                     tracing::warn!(
@@ -619,6 +655,7 @@ async fn admit_messages(
     if messages.is_empty() {
         return IngressResponse::ok();
     }
+    let keeps_reply_context = deps.sink.keeps_reply_context(extension_id);
     for message in messages {
         if let Err(error) = message.validate() {
             tracing::warn!(
@@ -630,8 +667,9 @@ async fn admit_messages(
         }
         // reply_context is stored host-side, keyed to the conversation
         // source binding, before the admission commit — the delivery
-        // coordinator reads it back for source-route replies.
-        if let Some(context) = &message.reply_context {
+        // coordinator reads it back for source-route replies. A channel that
+        // can never reply keeps none.
+        if keeps_reply_context && let Some(context) = &message.reply_context {
             let key = ReplyContextKey {
                 extension_id: extension_id.to_string(),
                 installation_id: installation_id.to_string(),
@@ -681,6 +719,44 @@ async fn admit_messages(
         }
     }
     IngressResponse::ok()
+}
+
+/// Route one owner activity to the channel's sink. Failures follow the
+/// admission policy: retryable asks for redelivery, permanent is acknowledged
+/// and discarded so an ordered vendor queue is not held behind it.
+async fn settle_owner_activity(
+    deps: &ExtensionIngressRouterDeps,
+    extension_id: &str,
+    installation_id: &str,
+    activity: OwnerActivity,
+) -> IngressResponse {
+    match deps
+        .sink
+        .owner_activity(OwnerActivityAdmission {
+            extension_id: extension_id.to_string(),
+            installation_id: installation_id.to_string(),
+            activity,
+        })
+        .await
+    {
+        Ok(()) => IngressResponse::ok(),
+        Err(error) if error.retryable => {
+            tracing::debug!(
+                extension_id,
+                error = %error,
+                "owner activity failed retryably"
+            );
+            IngressResponse::error(503, "temporarily_unavailable")
+        }
+        Err(error) => {
+            tracing::warn!(
+                extension_id,
+                error = %error,
+                "acknowledging and discarding owner activity the sink permanently rejected"
+            );
+            IngressResponse::acknowledged_discarded()
+        }
+    }
 }
 
 #[derive(Clone)]

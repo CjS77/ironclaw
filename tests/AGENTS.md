@@ -87,7 +87,7 @@ assertions) and `tests/e2e/AGENTS.md` (pytest fixtures, Playwright, mock LLM).
 | Approvals & permission gates | 10 | ✓ | ✓ | ✓ |
 | Auth / credentials / OAuth | 7 | 7 | ✓ | ✓ (heaviest) |
 | Extension lifecycle | 14 | 6 | ✓ | ✓ |
-| Channels (Slack/Telegram/webhook) | 5 | 3 | ✓ | ✓ |
+| Channels (Slack/Telegram/webhook) | 5 | 4 | ✓ | ✓ |
 | Triggers / automations / routines | 10 | 2 | ✓ | ✓ |
 | Memory & workspace | 11 | 2 | — | ✓ |
 | Skills | 1 | 1 | — | ✓ |
@@ -100,7 +100,7 @@ assertions) and `tests/e2e/AGENTS.md` (pytest fixtures, Playwright, mock LLM).
 | Providers (Google/Slack/GitHub contracts) | — | — | ✓ | ✓ |
 | Coverage/meta gates | — | 2 | ✓ | ✓ |
 
-Totals: **62** group scenarios · **64** flat integration bins (57 in
+Totals: **62** group scenarios · **65** flat integration bins (58 in
 `tests/integration/`, 7 in `tests/integration/auth/`) · **39** top-level Rust bins ·
 **103** Python scenario files (**889** test functions) registered in the active
 Reborn coverage map below. Section 6 separately inventories retained and legacy
@@ -222,7 +222,7 @@ ones speak MTProto over a raw socket with no injectable seam.
 
 ---
 
-## 4. Flat integration bins — `tests/integration/*.rs` and `tests/integration/auth/*.rs` (64)
+## 4. Flat integration bins — `tests/integration/*.rs` and `tests/integration/auth/*.rs` (65)
 
 One thread, whole real turn. Grouped by what the user experiences.
 
@@ -314,6 +314,7 @@ One thread, whole real turn. Grouped by what the user experiences.
 |---|---|
 | An extension installs and activates through the real generic runtime | `extension_runtime.rs` |
 | An inbound channel message is verified and routed by the real generic ingress mount | `extension_ingress.rs` |
+| A stranger's message on an intake-mode channel is stored for the owner instead of starting a turn — command-shaped text stays text, a replayed webhook adds nothing, no reply context is kept for a channel that never replies, the owner replying from their own device marks that chat's earlier messages handled (a message that arrives after the reply stays open, even when the reply's webhook is processed later), and the agent reads them back only inside the untrusted-content envelope. A new bin because `extension_ingress.rs` hand-registers its sink, and this must prove the production channel host assembly picks the intake sink itself | `intake_channel.rs` |
 | An outbound reply is published through the real inbound→outbound pipeline — Slack's lands on the native Agent stream (`chat.startStream`→`stopStream` with recipient/thread from the stored reply context), Telegram's as a terminal `sendMessage`; the answer never rides a coordinator send | `extension_delivery.rs` |
 | Pair a Telegram bot actor, run as that verified user, deliver anchored replies and busy notices, disconnect to revoke admission, then pair again to restore delivery (#6643/#6644) | `extension_delivery.rs::paired_telegram_bot_actor_turns_attribute_to_the_user_and_disconnect_revokes_admission` (production generated-code pairing, disconnect/repair, and anchored delivery evidence) |
 | Tenant-admin configuration and per-user install/remove stay separate state machines | `extension_user_lifecycle_isolation.rs` |
@@ -347,7 +348,7 @@ One thread, whole real turn. Grouped by what the user experiences.
 | A canonical 10-tool-call agent turn's database write volume is measured and reported (for tracking, not gated) on both libSQL and Postgres, and custom-actor group threads are rejected from canonical durable milestones | `db_write_canonical.rs` |
 | A downloaded run artifact carries per-iteration model-call timing evidence for a completed run, and still carries durable per-message timestamps (with an explicit `run_not_resident` reason) when the process-local timing buffer was evicted or the process restarted | `run_artifact_timings.rs` |
 
-One of the 64 registered bins, `delivery_user_journeys.rs`, holds the explicit
+One of the 65 registered bins, `delivery_user_journeys.rs`, holds the explicit
 channel-delivery journeys (two-lane model):
 
 | A user can… | Scenario |

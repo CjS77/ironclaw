@@ -24,7 +24,8 @@ use ironclaw_extension_contracts::external::{ExternalConversationRef, ExternalEv
 use ironclaw_extension_contracts::verified_inbound;
 use ironclaw_extension_host::ingress::{
     ExtensionIngressRouter, InboundAdmission, InboundAdmissionAck, InboundSink, InboundSinkError,
-    IngressConfigurationPort, IngressPortError, IngressSecretsPort, VerificationCandidate,
+    IngressConfigurationPort, IngressPortError, IngressSecretsPort, OwnerActivityAdmission,
+    VerificationCandidate,
 };
 use ironclaw_host_api::ids::SecretHandle;
 use ironclaw_host_api::product_adapter::auth::ChannelIngressVerifier;
@@ -130,6 +131,11 @@ pub struct ChannelIngressRegistration {
     pub sink: Arc<dyn InboundSink>,
     /// Awaited on graceful shutdown after ingress stops accepting requests.
     pub drain: Option<Arc<dyn ChannelIngressDrain>>,
+    /// Whether the router stores an admitted message's `reply_context` for
+    /// source-route replies. `false` only for a channel that can never reply:
+    /// an intake channel (`[channel.intake]` forbids `[channel.reply]` and
+    /// `[channel.delivery]`).
+    pub keeps_reply_context: bool,
 }
 
 /// Async drain hook for registrations that schedule post-admission work.
@@ -328,6 +334,29 @@ impl InboundSink for ExtensionIngressRegistry {
         };
         entry.sink.admit(admission).await
     }
+
+    fn keeps_reply_context(&self, extension_id: &str) -> bool {
+        // An extension with no ingress registration has nothing to keep:
+        // its admission fails retryably before anything is admitted.
+        self.registration(extension_id)
+            .is_some_and(|entry| entry.keeps_reply_context)
+    }
+
+    async fn owner_activity(
+        &self,
+        admission: OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError> {
+        let Some(entry) = self.registration(&admission.extension_id) else {
+            return Err(InboundSinkError {
+                retryable: true,
+                reason: format!(
+                    "extension `{}` has no ingress registration",
+                    admission.extension_id
+                ),
+            });
+        };
+        entry.sink.owner_activity(admission).await
+    }
 }
 
 // ── The generic inbound sink over ProductSurface admission ──────────────────
@@ -457,6 +486,15 @@ impl ChannelIngressDrain for GenericChannelInboundSink {
 
 #[async_trait]
 impl InboundSink for GenericChannelInboundSink {
+    /// A conversational channel stores no intake items, so the owner acting
+    /// from their own device changes nothing here: acknowledge and ignore.
+    async fn owner_activity(
+        &self,
+        _admission: OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError> {
+        Ok(())
+    }
+
     async fn admit(
         &self,
         admission: InboundAdmission,
@@ -923,7 +961,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ironclaw_extension_contracts::channel_adapter::{
-        ChannelConversationContext, ProductTriggerReason,
+        ChannelConversationContext, OwnerActivity, ProductTriggerReason,
     };
     use ironclaw_extension_contracts::external::{
         ExternalActorRef, ExternalConversationRef, ExternalEventId,
@@ -1126,6 +1164,16 @@ mod tests {
 
     #[async_trait]
     impl InboundSink for FailingSink {
+        async fn owner_activity(
+            &self,
+            _admission: OwnerActivityAdmission,
+        ) -> Result<(), InboundSinkError> {
+            Err(InboundSinkError {
+                retryable: true,
+                reason: "test sink".to_string(),
+            })
+        }
+
         async fn admit(
             &self,
             _admission: InboundAdmission,
@@ -1146,7 +1194,28 @@ mod tests {
             configuration: Arc::new(StaticIngressConfiguration::default()),
             sink: Arc::new(FailingSink),
             drain: None,
+            keeps_reply_context: true,
         }
+    }
+
+    /// The router asks the registry whether to keep a message's reply
+    /// context; the registry answers from the extension's registration, so a
+    /// channel that never replies (an intake channel) keeps none and an
+    /// unregistered extension keeps none.
+    #[test]
+    fn the_registry_answers_reply_context_retention_from_the_registration() {
+        let registry = ExtensionIngressRegistry::default();
+        registry.register("replies", registration(b"a"));
+        registry.register(
+            "never-replies",
+            ChannelIngressRegistration {
+                keeps_reply_context: false,
+                ..registration(b"b")
+            },
+        );
+        assert!(registry.keeps_reply_context("replies"));
+        assert!(!registry.keeps_reply_context("never-replies"));
+        assert!(!registry.keeps_reply_context("unregistered"));
     }
 
     async fn registered_secret(registry: &ExtensionIngressRegistry, extension_id: &str) -> Vec<u8> {
@@ -1257,6 +1326,28 @@ mod tests {
         assert_eq!(ack, InboundAdmissionAck::Accepted);
         sink.drain().await;
         assert_eq!(workflow.submit_count(), 1);
+        assert_eq!(observer.lock().expect("outcomes lock").pop(), None);
+    }
+
+    /// A conversational channel has no intake items, so owner activity is
+    /// acknowledged and changes nothing: no admission, no observer outcome.
+    #[tokio::test]
+    async fn a_conversational_sink_acknowledges_and_ignores_owner_activity() {
+        let (sink, workflow, observer) = pairing_sink(ChannelPairingInterception::NotHandled);
+
+        sink.owner_activity(OwnerActivityAdmission {
+            extension_id: "vendorx".to_string(),
+            installation_id: "install".to_string(),
+            activity: OwnerActivity {
+                conversation: ExternalConversationRef::new(None, "C-1", None, None)
+                    .expect("conversation"),
+                occurred_at: Utc::now(),
+            },
+        })
+        .await
+        .expect("acknowledged");
+        sink.drain().await;
+        assert_eq!(workflow.submit_count(), 0);
         assert_eq!(observer.lock().expect("outcomes lock").pop(), None);
     }
 

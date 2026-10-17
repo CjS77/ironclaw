@@ -281,6 +281,122 @@ Rollback to an older binary that strictly rejects unknown channel fields may
 require restoring a pre-upgrade resolved-manifest snapshot before reverting
 the binary.
 
+A channel may declare intake mode:
+
+```toml
+[channel.intake]
+```
+
+The section has no fields; its presence is the declaration
+(`ChannelIntakeDescriptor`, `ChannelDescriptor::is_intake`). A verified
+inbound message on an intake channel never starts an agent turn. The generic
+channel host registers an intake sink for it instead of the product workflow:
+the sink stores the message as an intake item (`ironclaw_intake`) owned by the
+deployment operator — the same user the operator actor policy resolves to —
+and the webhook is acknowledged after that write. The first delivery is
+`Accepted`; a replay of the same `(installation, event id)` is `Duplicate` and
+adds nothing. Verification is unchanged; conversation binding, pairing, actor
+resolution, command parsing, DM backfill, and delivery observers are never
+built for the channel, so text such as `approve` or `/stop` is stored as text.
+Attachment bytes are dropped; only their metadata is kept. No reply context
+is kept either: the channel's ingress registration carries
+`keeps_reply_context: false`, and before storing an adapter's
+`reply_context` the router asks the per-extension registry, which answers from
+that flag (on both the direct and the provider-batch path), since an intake
+channel can never reply.
+
+`ChannelDescriptor::validate` requires webhook `[channel.ingress]` for an
+intake channel (`IntakeRequiresWebhookIngress`) and refuses `commands`,
+`[channel.connection]`, `[channel.reply]`, and `[channel.delivery]`
+(`IntakeForbidsSection`). The field is skipped when absent, so resolved
+records of manifests without it keep their bytes and digests.
+
+**Storage bounds.** Each item is bounded: message text at 64 KiB (cut on a
+character boundary and flagged), at most 32 attachments' metadata, and no
+attachment bytes. The number of items is not bounded. Anyone who can message
+an intake channel can create items as fast as the route's rate limit allows
+(`IngressRateLimitConfig`, by default 120 requests per 60 seconds per
+installation), and items are never deleted, so the store grows for as long as
+messages keep arriving. There is no per-sender or total cap. The design relies
+on the vendor side to limit floods: the messaging account's own rate limits
+and spam controls, and the channel's own sidecar or bridge, which decides what
+it forwards.
+
+Adapters may return `InboundOutcome::OwnerActivity` (conversation ref +
+`occurred_at`): the account owner acted in that conversation from their own
+device, at `occurred_at` by the vendor's clock (for example the reply's
+message timestamp). The router hands it to the channel's sink through
+`InboundSink::owner_activity`, a required trait method with no default:
+every non-intake sink states in its own implementation that it acknowledges
+and ignores it; the per-extension registry forwards it; the intake sink marks
+that conversation's `received` items whose `received_at` is at or before
+`occurred_at` as `handled_by_owner`, keeping the change in the item's status
+history. The intake sink first clamps `occurred_at` to the host's current
+time, so a vendor timestamp in the future never enters `status_history`. A
+message that arrives after the owner's reply therefore stays open even when
+the reply's webhook is processed later.
+
+The comparison sets the vendor's time of the owner's action against the
+host's receive time of each item, and it can err in two directions. A message
+sent after the reply can be marked handled only if the vendor's clock runs
+ahead of the host's; that is bounded by clock skew, and by the clamp to the
+host's clock. A message the owner did answer stays `received` when the host
+received it after the reply's `occurred_at` — when the vendor delivered it
+late, for example on a retry long after it was sent. That direction leaves an
+answered message open, which is harmless, and it is bounded only by delivery
+delay, which can be far larger than clock skew.
+
+Sink failures follow the admission policy: retryable → 503 for redelivery,
+permanent → acknowledged and discarded. For the intake sink two failures are
+retryable: a storage outage, and a stored record that names a different
+owner (`ForeignRecord`), which means the per-user mount is misconfigured
+until an operator fixes it. Everything else is permanent: a request the store
+refuses, and a stored record that cannot be decoded or encoded (which every
+redelivery would hit again). A permanent failure's logged reason never
+carries a serialization cause, which could quote stored content. Listing and
+the owner-activity sweep skip a stored record that does not decode instead of
+failing.
+
+The model reads intake items only through `builtin.intake.list` and
+`builtin.intake.read` (read-only, dispatch effect only, scoped to the caller's
+tenant and user). They are offered whether or not an intake channel is
+installed, and say in their descriptions that they hold only messages from
+intake-mode channels and are empty when none is installed. They hold only the
+store's read half (`IntakeReader`), which writes nothing: it reads declared
+ordered projections and never declares one (the write paths do, before an
+owner's first item), and an owner whose projections were never declared lists
+as empty. Message text, chat and sender ids, sender display names, and
+attachment ids, MIME types and file names reach the model inside the
+untrusted-content envelope (`EnvelopeSource::IntakeMessage`). An attachment
+MIME type is stored only as a bare RFC 6838 `type/subtype` token; metadata
+that fails that check is dropped and the item is flagged
+`attachments_truncated`. Text the envelope refuses as instruction-like is
+still shown under the same untrusted label, flagged with the phrase that
+matched, so the owner's agent can report it but is told never to follow it.
+
+On both paths, accepted and flagged, line breaks are kept: `\r\n` and a lone
+`\r` become `\n`, a tab becomes a space, and other control characters are
+removed. The tool result reaches the model JSON-encoded, so a kept newline is
+the escaped `\n` inside a string and cannot start a line of the prompt. The
+envelope's checks run over the text with each line break as one space, so its
+byte budget covers the whole text and a phrase split across lines is still
+flagged. On both paths these chat-template sequences, and only these, are
+rewritten before the model sees them: every `<|` and `|>` (so `<|…|>` special
+tokens such as `<|im_start|>`, `<|endoftext|>`, `<|eot_id|>`), and `[INST]`,
+`[/INST]`, `<system>` and `</system>` in any ASCII case. The leading `<`
+becomes `‹`, the `>` of `|>` becomes `›`, and the leading `[` becomes `［`, so
+the text stays readable without those sequences appearing verbatim. Other
+template syntaxes are not rewritten.
+
+Tests: the store contract suite
+(`cargo test -p ironclaw_intake --test intake_store_contract`) covers
+deduplication, ordering and pagination, owner activity, owner isolation, CAS
+races, a read-only reader, and libSQL reopen; the integration bin
+`reborn_integration_intake_channel` (`tests/integration/intake_channel.rs`)
+drives a signed webhook through the production channel host assembly and
+checks storage, deduplication, the absence of a turn and of reply context,
+owner activity, and the envelope in `builtin.intake.read`.
+
 Host-bundled WASM manifest:
 
 ```toml

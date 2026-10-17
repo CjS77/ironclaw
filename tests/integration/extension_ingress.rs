@@ -142,6 +142,7 @@ impl AcmeIngress {
                 configuration: Arc::new(StaticIngressConfiguration::default()),
                 sink: sink.clone() as Arc<dyn ironclaw_extension_host::ingress::InboundSink>,
                 drain: Some(sink as Arc<dyn ChannelIngressDrain>),
+                keeps_reply_context: true,
             },
         );
         let mount = extension_ingress_route_mount(&parts).expect("production mount builds");

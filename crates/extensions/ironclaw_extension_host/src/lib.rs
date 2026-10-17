@@ -37,6 +37,7 @@ pub mod channel_host;
 pub mod channel_identity;
 pub mod channel_identity_binding;
 pub mod channel_identity_store;
+mod channel_intake;
 pub mod channel_lifecycle;
 pub mod channel_outbound_targets;
 pub mod channel_pairing;

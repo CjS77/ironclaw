@@ -4002,6 +4002,7 @@ dependencies = [
  "ironclaw_host_ingress",
  "ironclaw_host_runtime",
  "ironclaw_identity",
+ "ironclaw_intake",
  "ironclaw_libsql_runtime",
  "ironclaw_llm",
  "ironclaw_loop_contracts",
@@ -4230,6 +4231,7 @@ dependencies = [
  "ironclaw_host_api",
  "ironclaw_host_ingress",
  "ironclaw_host_runtime",
+ "ironclaw_intake",
  "ironclaw_llm",
  "ironclaw_loop_contracts",
  "ironclaw_loop_host",
@@ -4498,6 +4500,7 @@ dependencies = [
  "ironclaw_extractors",
  "ironclaw_filesystem",
  "ironclaw_host_api",
+ "ironclaw_intake",
  "ironclaw_loop_contracts",
  "ironclaw_mcp",
  "ironclaw_memory",
@@ -4566,6 +4569,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironclaw_intake"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hex",
+ "ironclaw_extension_contracts",
+ "ironclaw_filesystem",
+ "ironclaw_host_api",
+ "ironclaw_intake",
+ "libsql",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ironclaw_integration_tests"
 version = "0.1.0"
 dependencies = [
@@ -4602,6 +4626,7 @@ dependencies = [
  "ironclaw_host_api",
  "ironclaw_host_ingress",
  "ironclaw_host_runtime",
+ "ironclaw_intake",
  "ironclaw_llm",
  "ironclaw_loop_contracts",
  "ironclaw_loop_host",

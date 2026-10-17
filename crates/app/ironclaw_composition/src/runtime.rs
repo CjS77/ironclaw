@@ -1218,6 +1218,11 @@ impl RebornRuntime {
             delivered_gate_routes: Arc::clone(&self.delivered_gate_routes),
             outbound_preferences: Arc::clone(&self.outbound_preferences),
             notification_inbox: Arc::clone(&self.notification_inbox),
+            // Same composition root filesystem the production store is built
+            // over, so this store reads and writes the same intake items.
+            intake_store: crate::intake_store_assembly::build_intake_store(Arc::clone(
+                &self.extension_filesystem,
+            )),
             triggered_delivery_store: Arc::clone(&self.triggered_run_delivery),
             outbound_delivery_targets: Arc::clone(self.outbound_delivery_target_registry.as_ref()?)
                 as Arc<dyn ironclaw_outbound::OutboundDeliveryTargetProvider>,

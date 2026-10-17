@@ -1,0 +1,51 @@
+# Invented-vendor fixture for intake-mode channels.
+#
+# A webhook channel that declares `[channel.intake]`: every verified inbound
+# message is stored as an intake item for the deployment owner and never
+# starts an agent turn. It therefore declares no reply, delivery, connection,
+# or commands. Used by the generic intake suites only — no product names it.
+schema_version = "reborn.extension_manifest.v3"
+id = "acme-intake"
+name = "Acme Intake"
+version = "0.1.0"
+description = "Invented-vendor fixture: a webhook channel whose inbound messages are stored as intake items instead of starting turns."
+trust = "first_party_requested"
+
+[admin_configuration]
+group_id = "vendor.acme-intake"
+display_name = "Acme Intake webhook"
+description = "Webhook signing secret for the Acme Intake channel."
+fields = [
+  { handle = "acme_intake_signing_secret", label = "Signing secret", secret = true, required = true },
+]
+
+[runtime]
+kind = "first_party"
+service = "acme-intake.extension/v1"
+
+[channel]
+id = "intake"
+display_name = "Acme intake"
+conversation_model = "continuous"
+
+[channel.intake]
+
+[channel.ingress]
+route_suffix = "events"           # served at /webhooks/extensions/acme-intake/events
+method = "post"
+body_limit_bytes = 65536
+
+[channel.ingress.verification]
+kind = "hmac_sha256"
+secret_handle = "acme_intake_signing_secret"
+signature_header = "X-Acme-Signature"
+signature_prefix = "v0="
+signature_encoding = "hex"
+timestamp_header = "X-Acme-Request-Timestamp"
+max_age_seconds = 300
+signed_payload = [
+  { literal = "v0:" },
+  { header = "X-Acme-Request-Timestamp" },
+  { literal = ":" },
+  { body = true },
+]

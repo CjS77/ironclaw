@@ -92,7 +92,8 @@ pub use first_party_tools::{
     APPLY_PATCH_CAPABILITY_ID, ATTACH_WORKSPACE_FILE_TO_REPLY_CAPABILITY_ID,
     BUILTIN_FIRST_PARTY_PROVIDER, BuiltinFirstPartyTools, DOCUMENT_EDIT_CAPABILITY_ID,
     ECHO_CAPABILITY_ID, GLOB_CAPABILITY_ID, GREP_CAPABILITY_ID, HTML_TO_PDF_CAPABILITY_ID,
-    HTTP_CAPABILITY_ID, HTTP_SAVE_CAPABILITY_ID, JSON_CAPABILITY_ID, LIST_DIR_CAPABILITY_ID,
+    HTTP_CAPABILITY_ID, HTTP_SAVE_CAPABILITY_ID, INTAKE_LIST_CAPABILITY_ID,
+    INTAKE_READ_CAPABILITY_ID, JSON_CAPABILITY_ID, LIST_DIR_CAPABILITY_ID,
     MEMORY_READ_CAPABILITY_ID, MEMORY_SEARCH_CAPABILITY_ID, MEMORY_TREE_CAPABILITY_ID,
     MEMORY_WRITE_CAPABILITY_ID, MemoryToolProfile, NATIVE_MEMORY_FIRST_PARTY_PROVIDER,
     NativeMemoryToolHandler, OUTBOUND_DELIVER_CAPABILITY_ID, PROFILE_SET_CAPABILITY_ID,
@@ -115,9 +116,9 @@ pub use first_party_tools::{
     builtin_first_party_package, builtin_first_party_package_for_process_backend,
     ensure_memory_mount, finish_memory_tool_result, map_memory_service_error,
     memory_invocation_for_request, memory_tool_profiles, normalize_memory_tool_input,
-    projected_trigger_capability_call_facts_source, register_memory_tool_handler,
-    register_native_memory_tools, register_outbound_deliver_first_party_handler,
-    register_reply_attachment_first_party_handler,
+    projected_trigger_capability_call_facts_source, register_intake_first_party_handlers,
+    register_memory_tool_handler, register_native_memory_tools,
+    register_outbound_deliver_first_party_handler, register_reply_attachment_first_party_handler,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use first_party_tools::{

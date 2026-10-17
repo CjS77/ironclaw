@@ -44,6 +44,9 @@ ironclaw_common = { path = "../../contracts/ironclaw_common" }
 ironclaw_conversations = { path = "../../domains/ironclaw_conversations" }
 ironclaw_filesystem = { path = "../../substrates/ironclaw_filesystem" }
 ironclaw_host_api = { path = "../../contracts/ironclaw_host_api" }
+# Intake-mode channels store verified inbound messages as intake items
+# instead of admitting them into the product workflow.
+ironclaw_intake = { path = "../../domains/ironclaw_intake" }
 ironclaw_product_contracts = { path = "../../contracts/ironclaw_product_contracts", version = "0.1.0" }
 ironclaw_extension_contracts = { path = "../../contracts/ironclaw_extension_contracts", version = "0.1.0" }
 ironclaw_host_ingress = { path = "../../product/ironclaw_host_ingress" }
@@ -99,6 +102,8 @@ ironclaw_authorization = { path = "../../kernel/ironclaw_authorization" }
 ironclaw_filesystem = { path = "../../substrates/ironclaw_filesystem", features = ["test-support"] }
 ironclaw_host_api = { path = "../../contracts/ironclaw_host_api", features = ["test-support"] }
 ironclaw_host_runtime = { path = "../../kernel/ironclaw_host_runtime", features = ["test-support"] }
+# The shared in-memory per-user `/intake` mount for the intake sink tests.
+ironclaw_intake = { path = "../../domains/ironclaw_intake", features = ["test-support"] }
 ironclaw_outbound = { path = "../../domains/ironclaw_outbound", features = ["test-support"] }
 ironclaw_processes = { path = "../../kernel/ironclaw_processes", features = ["test-support"] }
 ironclaw_assistant = { path = "../../product/ironclaw_assistant", features = ["test-support"] }

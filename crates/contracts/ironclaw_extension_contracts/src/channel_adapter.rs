@@ -257,8 +257,26 @@ pub enum InboundOutcome {
     BatchFragment(Box<InboundBatchFragment>),
     /// Bounded immediate response (e.g. a URL-verification challenge).
     Respond(ImmediateResponse),
+    /// The account owner acted in a conversation from their own device.
+    OwnerActivity(OwnerActivity),
     /// Authenticated no-op (ignored event types).
     Ignore,
+}
+
+/// The account owner acted in a conversation from their own device, for
+/// example by replying to someone from their phone. On an intake channel the
+/// host marks that conversation's open intake items received at or before
+/// `occurred_at` as handled by the owner; any other channel acknowledges it
+/// and does nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerActivity {
+    pub conversation: ExternalConversationRef,
+    /// When the owner acted, by the vendor's clock (for example the reply's
+    /// message timestamp). The host compares it with its own receive time
+    /// of each stored message, so the two clocks may disagree by a few
+    /// seconds; a message that arrives within that skew of the owner's reply
+    /// can land on either side.
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Maximum provider batch-key or fragment-id length accepted from an adapter.
