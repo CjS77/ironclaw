@@ -74,7 +74,13 @@ impl OoxmlPackage {
             if file.is_dir() {
                 continue;
             }
-            let name = file.name().to_string();
+            let name = file
+                .name()
+                .map_err(|source| DocumentError::OoxmlArchive {
+                    operation: "decode archive entry name",
+                    source,
+                })?
+                .into_owned();
             // The declared size is a hint a hostile archive can lie about, so
             // it is only a fast pre-check; `take` below enforces the real cap
             // against bytes actually read.
@@ -171,7 +177,7 @@ impl OoxmlPackage {
         let mut cursor = Cursor::new(Vec::new());
         {
             let mut zip = zip::ZipWriter::new(&mut cursor);
-            let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+            let options: zip::write::SimpleFileOptions = zip::write::FileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .last_modified_time(
                     zip::DateTime::from_date_and_time(1980, 1, 1, 0, 0, 0)
@@ -341,7 +347,7 @@ mod tests {
         let mut cursor = Cursor::new(Vec::new());
         {
             let mut zip = zip::ZipWriter::new(&mut cursor);
-            let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+            let options: zip::write::SimpleFileOptions = zip::write::FileOptions::default();
             for (name, bytes) in entries {
                 zip.start_file(*name, options).unwrap();
                 zip.write_all(bytes).unwrap();

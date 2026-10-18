@@ -257,7 +257,7 @@ fn bounded_read_zip_entry_with_limits<R: Read + ?Sized>(
     max_total: u64,
 ) -> Result<String, ZipEntryError> {
     let entry_size = file.size();
-    let entry_name = file.name().to_string();
+    let entry_name = String::from_utf8_lossy(file.name_raw()).into_owned();
 
     // Fast pre-check using declared header size (untrusted, but cheap reject)
     // against per-entry limit.
@@ -342,22 +342,31 @@ fn extract_docx(data: &[u8]) -> Result<String, String> {
     extract_office_xml(data, "word/document.xml")
 }
 
+/// The archive's `<prefix>*.xml` part names, sorted; unreadable entries are not parts.
+fn sorted_part_names<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    prefix: &str,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i)
+            && let Ok(name) = file.name()
+            && name.starts_with(prefix)
+            && name.ends_with(".xml")
+        {
+            names.push(name.into_owned());
+        }
+    }
+    names.sort();
+    names
+}
+
 fn extract_pptx(data: &[u8]) -> Result<String, String> {
     let cursor = std::io::Cursor::new(data);
     let mut archive =
         zip::ZipArchive::new(cursor).map_err(|e| format!("invalid PPTX archive: {e}"))?;
 
-    // Collect slide filenames (ppt/slides/slide1.xml, slide2.xml, ...)
-    let mut slide_names: Vec<String> = Vec::new();
-    for i in 0..archive.len() {
-        if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_string();
-            if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
-                slide_names.push(name);
-            }
-        }
-    }
-    slide_names.sort();
+    let slide_names = sorted_part_names(&mut archive, "ppt/slides/slide");
 
     let mut all_text = Vec::new();
     let mut total_decompressed: u64 = 0;
@@ -415,17 +424,7 @@ fn extract_xlsx(data: &[u8]) -> Result<String, String> {
         Vec::new()
     };
 
-    // Read sheet data
-    let mut sheet_names: Vec<String> = Vec::new();
-    for i in 0..archive.len() {
-        if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_string();
-            if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
-                sheet_names.push(name);
-            }
-        }
-    }
-    sheet_names.sort();
+    let sheet_names = sorted_part_names(&mut archive, "xl/worksheets/sheet");
 
     let mut all_text = Vec::new();
     let mut rejected: Option<String> = None;

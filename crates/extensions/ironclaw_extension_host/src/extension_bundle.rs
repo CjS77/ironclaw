@@ -53,7 +53,14 @@ pub fn unzip_extension_bundle(
         if !entry.is_file() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|error| {
+                ExtensionBundleError::invalid(format!(
+                    "uploaded tool bundle has an entry name that cannot be decoded: {error}"
+                ))
+            })?
+            .into_owned();
         ExtensionAssetPath::new(name.clone()).map_err(|error| {
             ExtensionBundleError::invalid(format!(
                 "uploaded tool bundle contains an unsafe path: {name}: {error}"

@@ -107,7 +107,7 @@ sha2 = "0.11"
 hex = "0.4"
 url = "2"
 toml = "1.1"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 libsql = { version = "0.9", default-features = false, features = ["core", "replication", "remote", "tls"] }
 # `test-support` exposes the witness-gated protocol-auth test seam and the
 # messaging conformance helpers used by the integration fixtures. Declared
