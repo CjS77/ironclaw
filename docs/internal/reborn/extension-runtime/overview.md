@@ -235,6 +235,16 @@ Notes on the sections:
   `with_session_reply_channel`) gets the host's projection sink, attached by
   composition through the same `surfaces.reply` slot every package-bound
   sink uses. Every delivery section binds `ChannelDelivery`.
+- **`[channel.intake]`** (optional, no fields) puts a channel in intake mode:
+  a verified inbound message never starts a turn. The host stores it as an
+  intake item (`ironclaw_intake`) owned by the deployment operator and
+  acknowledges the webhook; the model reads items through the read-only
+  `builtin.intake.list` / `builtin.intake.read` tools, with every
+  outsider-controlled string inside the untrusted-content envelope. Intake
+  requires webhook `[channel.ingress]` and forbids `commands`,
+  `[channel.connection]`, `[channel.reply]`, and `[channel.delivery]`.
+  Verification is unchanged; binding, pairing, actor resolution, and command
+  handling are never built for the channel.
 - **`[[channel.egress]]`** may narrow a host/method grant with exact `paths`,
   segment-bounded `path_prefixes`, and request/response byte limits. Empty path
   lists preserve the legacy host+method policy. Path-placeholder credentials
@@ -727,7 +737,7 @@ sequenceDiagram
     R->>R: match route, enforce method/body/rate/deadline
     R->>R: execute verification recipe (constant-time, replay window)
     R->>A: receive(verified bounded request, restricted egress)
-    A-->>R: complete Messages | BatchFragment | Respond | Ignore
+    A-->>R: complete Messages | BatchFragment | Respond | OwnerActivity | Ignore
     alt Ordinary message
         R->>R: validate exact attachments, sanitize context, apply policy
         R->>W: durable dedupe + attachment landing + admission commit
@@ -741,6 +751,14 @@ sequenceDiagram
     end
     W->>W: identity/conversation binding, turn submission
 ```
+
+On an intake channel (`[channel.intake]`) the admission sink is the intake
+sink instead of the product surface: the message is stored as an intake item
+(deduplicated by installation and event id) and the 2xx follows that write;
+no binding or turn happens, and no reply context is kept. `OwnerActivity` — the account owner acting in a
+conversation from their own device, at a vendor-reported time — goes to the
+same sink, which marks that conversation's open items received at or before
+that time handled by the owner; a non-intake sink acknowledges and ignores it.
 
 Conversation binding honors the channel's declared `conversation_model`
 (continuous channels bind per external conversation ref). With multiple

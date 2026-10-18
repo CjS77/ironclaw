@@ -704,6 +704,11 @@ mod tests {
             "builtin.trigger_status",
             &[EffectKind::DispatchCapability],
         );
+        // The intake read tools are read-only: dispatch only, no writes, so
+        // they stay visible in standalone runs without widening any effect.
+        for capability in ["builtin.intake.list", "builtin.intake.read"] {
+            assert_trigger_grant(&policy, capability, &[EffectKind::DispatchCapability]);
+        }
         assert_trigger_grant(
             &policy,
             "builtin.trigger_pause",

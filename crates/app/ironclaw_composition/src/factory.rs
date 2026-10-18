@@ -290,6 +290,9 @@ pub(crate) struct RebornRuntimeStores {
     pub(crate) skill_auto_activate_learned: Arc<AtomicBool>,
     pub(crate) outbound_state: Arc<dyn OutboundStateStorePort>,
     pub(crate) notification_inbox: ComposedNotificationInbox,
+    /// Intake items stored by intake-mode channels; read by the
+    /// `builtin.intake.*` tools.
+    pub(crate) intake_store: Arc<crate::intake_store_assembly::ComposedIntakeStore>,
     pub(crate) reply_attachment_intents: Arc<dyn ReplyAttachmentIntentPort>,
     pub(crate) delivered_gate_routes: Arc<dyn DeliveredGateRouteStore>,
     pub(crate) triggered_run_delivery: Arc<dyn TriggeredRunDeliveryStore>,

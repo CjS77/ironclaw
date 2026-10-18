@@ -141,6 +141,14 @@ struct UnexpectedAdmissionSink {
 
 #[async_trait::async_trait]
 impl InboundSink for UnexpectedAdmissionSink {
+    async fn owner_activity(
+        &self,
+        _admission: ironclaw_extension_host::ingress::OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
     async fn admit(
         &self,
         _admission: InboundAdmission,
@@ -644,6 +652,7 @@ impl VendorIngress {
                 configuration: Arc::new(StaticIngressConfiguration::default()),
                 sink: sink.clone() as Arc<dyn ironclaw_extension_host::ingress::InboundSink>,
                 drain: Some(sink as Arc<dyn ChannelIngressDrain>),
+                keeps_reply_context: true,
             },
         );
         let mount = extension_ingress_route_mount(&parts).expect("production mount builds");
@@ -1375,6 +1384,7 @@ async fn telegram_identity_configuration_errors_are_retryable_on_the_real_router
                     calls: Arc::clone(&sink_calls),
                 }),
                 drain: None,
+                keeps_reply_context: true,
             },
         );
         responses.push(

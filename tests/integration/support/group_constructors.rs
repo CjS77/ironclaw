@@ -139,6 +139,13 @@ impl RebornIntegrationGroup {
         Self::builder().extension_delivery().await
     }
 
+    /// [`Self::extension_delivery`] plus the invented `acme-intake`
+    /// deployment channel (`[channel.intake]`) and the `builtin.intake.*`
+    /// read tools.
+    pub async fn intake_channel() -> HarnessResult<Self> {
+        Self::builder().intake_channel().await
+    }
+
     /// [`Self::extension_delivery`] plus `builtin.write_file`, so a background
     /// run can park on a REAL approval gate while its notification channels
     /// stay deliverable. Auto-approve is ON; gate the write per-scenario with
@@ -659,6 +666,40 @@ impl RebornIntegrationGroupBuilder {
                 host_runtime
                     .reborn_services_for_test()
                     .ok_or("extension_delivery harness is missing its RebornServices bundle")?,
+                ironclaw_composition::test_support::ChannelConnectionTestConfig {
+                    tenant_id: scope.tenant_id.as_str().to_string(),
+                    agent_id: scope
+                        .agent_id
+                        .as_ref()
+                        .map(|agent| agent.as_str().to_string())
+                        .ok_or("group product scope is missing an agent id")?,
+                    project_id: scope
+                        .project_id
+                        .as_ref()
+                        .map(|project| project.as_str().to_string()),
+                },
+            )?;
+        self.channel_connection = Some(Arc::new(channel_connection));
+        let capability = GroupCapability::HostRuntime(Arc::new(host_runtime));
+        self.into_group(base, capability).await
+    }
+
+    /// Build an intake-channel group. See
+    /// [`RebornIntegrationGroup::intake_channel`].
+    pub async fn intake_channel(mut self) -> HarnessResult<RebornIntegrationGroup> {
+        let base = self.build_base().await?;
+        let host_runtime = build_group_capability_with_base(
+            super::super::harness::profiles::intake::intake_channel_tools_profile()?,
+            &base,
+        )
+        .await?
+        .with_run_owner_scoped_capability_dispatch();
+        let scope = &base.product_harness.scope;
+        let channel_connection =
+            ironclaw_composition::test_support::build_channel_connection_for_test(
+                host_runtime
+                    .reborn_services_for_test()
+                    .ok_or("intake_channel harness is missing its RebornServices bundle")?,
                 ironclaw_composition::test_support::ChannelConnectionTestConfig {
                     tenant_id: scope.tenant_id.as_str().to_string(),
                     agent_id: scope

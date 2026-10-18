@@ -560,6 +560,13 @@ const SAME_LAYER_EDGE_INVENTORY: &[SameLayerEdge] = &[
         decided_in: "WS2",
     },
     SameLayerEdge {
+        crate_name: "ironclaw_intake",
+        dependency_name: "ironclaw_filesystem",
+        layer: "substrates",
+        owner: "domains/",
+        decided_in: "intake-mode channels (durable intake item grammar over ScopedFilesystem)",
+    },
+    SameLayerEdge {
         crate_name: "ironclaw_notifications",
         dependency_name: "ironclaw_filesystem",
         layer: "substrates",
@@ -764,7 +771,10 @@ const SAME_LAYER_EDGE_INVENTORY: &[SameLayerEdge] = &[
 // 73 -> 74: the Jev tool classifier package (`ironclaw_tool_selection_jev`)
 // is a substrates-layer provider and sends its requests through the
 // `ironclaw_network` policy egress.
-const SAME_LAYER_EDGE_BASELINE: usize = 74;
+// 74 -> 75: the intake-item domain (`ironclaw_intake`) is a new record grammar
+// introduced at the substrates layer; like notifications it stores its records
+// through the shared filesystem substrate.
+const SAME_LAYER_EDGE_BASELINE: usize = 75;
 
 /// Sanity floors for the metadata walk. A gate that scans nothing must never
 /// read as success; these are deliberately far below the live values (✎ **65**
@@ -824,6 +834,7 @@ const CRATE_LAYER_ORIGINS: &[(&str, &str)] = &[
     ("ironclaw_host_api", "contracts"),
     ("ironclaw_host_ingress", "products"),
     ("ironclaw_host_runtime", "kernel"),
+    ("ironclaw_intake", "substrates"),
     ("ironclaw_libsql_runtime", "substrates"),
     ("ironclaw_llm", "substrates"),
     ("ironclaw_loop_contracts", "contracts"),

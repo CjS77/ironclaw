@@ -834,6 +834,7 @@ async fn build_harness_with_options(options: HarnessOptions) -> Harness {
         channel_pairing: None,
         admin_users: Arc::new(FakeAdminUsers::seeded(USER, options.actor_role)),
         connect_link_base_url: options.connect_link_base_url.clone(),
+        intake_recorder: ironclaw_intake::test_support::in_memory_intake_store(),
     };
     let assembly = GenericChannelHostAssembly::start(deps);
     let command_executions = Arc::new(RecordingCommandExecutionSurface::new(model_preferences));

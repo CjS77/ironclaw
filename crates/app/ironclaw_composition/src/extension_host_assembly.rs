@@ -458,6 +458,8 @@ pub(crate) struct ChannelHostAssemblySource {
     pub(crate) delivered_gate_routes: Arc<dyn ironclaw_outbound::DeliveredGateRouteStore>,
     pub(crate) outbound_preferences: Arc<dyn ironclaw_outbound::CommunicationPreferenceRepository>,
     pub(crate) notification_inbox: Arc<dyn ironclaw_notifications::NotificationInboxStorePort>,
+    /// Where intake-mode channels store their verified inbound messages.
+    pub(crate) intake_store: Arc<crate::intake_store_assembly::ComposedIntakeStore>,
     /// Durable outcome record for proactive (trigger-fired) deliveries; the
     /// workflow factory wires it into every per-extension triggered driver.
     pub(crate) triggered_delivery_store: Arc<dyn ironclaw_outbound::TriggeredRunDeliveryStore>,
@@ -504,6 +506,7 @@ fn channel_host_source(services: &RebornRuntimeStores) -> Option<ChannelHostAsse
         delivered_gate_routes: Arc::clone(&services.delivered_gate_routes),
         outbound_preferences: Arc::clone(&services.outbound_preferences),
         notification_inbox: Arc::clone(&services.notification_inbox),
+        intake_store: Arc::clone(&services.intake_store),
         triggered_delivery_store: Arc::clone(&services.triggered_run_delivery),
         outbound_delivery_targets: Arc::clone(&services.outbound_delivery_targets)
             as Arc<dyn ironclaw_outbound::OutboundDeliveryTargetProvider>,
@@ -581,6 +584,7 @@ pub(crate) fn start_channel_host(
         delivered_gate_routes,
         outbound_preferences,
         notification_inbox,
+        intake_store,
         triggered_delivery_store,
         outbound_delivery_targets,
         identity_lookup,
@@ -658,6 +662,7 @@ pub(crate) fn start_channel_host(
         channel_pairing: channel_pairing.clone(),
         admin_users,
         connect_link_base_url: connect_link_base_url_from_env(),
+        intake_recorder: intake_store.clone(),
     });
     StartedChannelHost {
         assembly,

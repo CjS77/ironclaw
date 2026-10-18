@@ -160,6 +160,17 @@ pub struct ChannelDeliveryDescriptor {
     pub requires_enrollment: bool,
 }
 
+/// The `[channel.intake]` section: a verified inbound message is stored as
+/// an intake item for the account owner and never starts an agent turn.
+///
+/// Presence is the declaration; the section has no fields yet. An intake
+/// channel needs webhook ingress and may declare no commands, connection,
+/// reply, or delivery, since none of those can apply to a message that never
+/// reaches the agent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelIntakeDescriptor {}
+
 /// The declared channel surface of one extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChannelDescriptor {
@@ -197,6 +208,10 @@ pub struct ChannelDescriptor {
     /// hosts must not infer a recipe from an extension id or display name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<ChannelConnectionDescriptor>,
+    /// Intake mode (`[channel.intake]`). Absent keeps resolved records
+    /// byte-identical to manifests that predate the section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intake: Option<ChannelIntakeDescriptor>,
 }
 
 /// Private read shape for the one in-place v3 channel evolution.
@@ -227,6 +242,8 @@ struct ChannelDescriptorWire {
     delivery: Option<ChannelDeliveryDescriptor>,
     #[serde(default)]
     connection: Option<ChannelConnectionDescriptor>,
+    #[serde(default)]
+    intake: Option<ChannelIntakeDescriptor>,
     #[serde(default)]
     inbound: Option<bool>,
     #[serde(default)]
@@ -303,6 +320,7 @@ impl<'de> Deserialize<'de> for ChannelDescriptor {
             reply,
             delivery,
             connection: wire.connection,
+            intake: wire.intake,
         })
     }
 }
@@ -313,6 +331,12 @@ impl ChannelDescriptor {
     /// *that* a channel does something without saying *how*.
     pub fn supports_inbound(&self) -> bool {
         self.ingress.is_some()
+    }
+
+    /// Whether verified inbound messages are stored as intake items instead
+    /// of starting turns (`[channel.intake]`).
+    pub fn is_intake(&self) -> bool {
+        self.intake.is_some()
     }
 
     /// Whether this channel can answer a run's input (the reply axis).
@@ -380,6 +404,9 @@ impl ChannelDescriptor {
                 || prefix.chars().any(char::is_control))
         {
             return Err(ChannelDescriptorError::InvalidCommandPrefix);
+        }
+        if self.intake.is_some() {
+            self.validate_intake()?;
         }
         if self.connection.is_some() && self.ingress.is_none() {
             return Err(ChannelDescriptorError::ConnectionWithoutInbound);
@@ -821,6 +848,29 @@ pub struct ChannelPresentation {
     pub command_prefix: Option<String>,
 }
 
+impl ChannelDescriptor {
+    fn validate_intake(&self) -> Result<(), ChannelDescriptorError> {
+        if !self
+            .ingress
+            .as_ref()
+            .is_some_and(|ingress| !ingress.verification.is_authenticated_session())
+        {
+            return Err(ChannelDescriptorError::IntakeRequiresWebhookIngress);
+        }
+        for (section, declared) in [
+            ("commands", !self.commands.is_empty()),
+            ("connection", self.connection.is_some()),
+            ("reply", self.reply.is_some()),
+            ("delivery", self.delivery.is_some()),
+        ] {
+            if declared {
+                return Err(ChannelDescriptorError::IntakeForbidsSection { section });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Structural channel-descriptor failures (path context added by the
 /// manifest parser).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -872,7 +922,15 @@ pub enum ChannelDescriptorError {
     SessionIngressWithRouteSuffix,
     #[error("webhook ingress must declare a route_suffix to mount its receiving route")]
     WebhookIngressWithoutRouteSuffix,
+    #[error("[channel.intake] requires webhook [channel.ingress]")]
+    IntakeRequiresWebhookIngress,
+    #[error("[channel.intake] forbids `{section}`: an intake message never reaches the agent")]
+    IntakeForbidsSection { section: &'static str },
 }
+
+#[cfg(test)]
+#[path = "channel_intake_tests.rs"]
+mod channel_intake_tests;
 
 #[cfg(test)]
 mod tests {

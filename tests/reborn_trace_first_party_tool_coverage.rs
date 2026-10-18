@@ -110,6 +110,13 @@ const REBORN_FIRST_PARTY_E2E_COVERED_CAPABILITIES: &[&str] = &[
     // renders it.
     ironclaw_host_runtime::DOCUMENT_EDIT_CAPABILITY_ID,
     ironclaw_host_runtime::HTML_TO_PDF_CAPABILITY_ID,
+    // The intake read tools. `reborn_integration_intake_channel` drives a
+    // signed inbound message through the real channel host into the intake
+    // store, then has the model read it back through `builtin.intake.read`
+    // (and list it through `builtin.intake.list`) on the composed runtime,
+    // asserting the text arrives inside the untrusted-content envelope.
+    ironclaw_host_runtime::INTAKE_LIST_CAPABILITY_ID,
+    ironclaw_host_runtime::INTAKE_READ_CAPABILITY_ID,
 ];
 
 const SKILL_NAME: &str = "reborn-skill-e2e";

@@ -483,6 +483,31 @@ fn reborn_crate_dependency_boundaries_hold() {
             .collect::<Vec<_>>(),
     );
 
+    // Intake items: the crate stores text written by people outside the
+    // workspace, so it stays a plain store. It must not start turns, call a
+    // model, reach the network, or wrap prompts. Wrapping intake text for a
+    // model belongs to the read tools in the host runtime, which is why
+    // `ironclaw_prompt_envelope` is not on this list. Among internal ironclaw
+    // crates it may name only the identity vocabulary (`ironclaw_host_api`),
+    // the storage it persists behind (`ironclaw_filesystem`), and the
+    // external conversation and actor references it records
+    // (`ironclaw_extension_contracts`). It is an allowlist so that any new
+    // dependency has to be added here on purpose.
+    let intake_allowed = [
+        "ironclaw_intake",
+        "ironclaw_host_api",
+        "ironclaw_filesystem",
+        "ironclaw_extension_contracts",
+    ];
+    assert_no_normal_workspace_deps(
+        &dependencies,
+        "ironclaw_intake",
+        workspace_ironclaw_crates(&dependencies)
+            .into_iter()
+            .filter(|name| !intake_allowed.contains(name))
+            .collect::<Vec<_>>(),
+    );
+
     // PROPOSAL §11.2.3 contracts purity — `ironclaw_loop_contracts`.
     //
     // The loop tier's contract crate is the typed membrane between replaceable

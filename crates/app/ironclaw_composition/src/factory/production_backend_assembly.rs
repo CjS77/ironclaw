@@ -487,6 +487,8 @@ pub(super) async fn build_backend_production(
     );
     let outbound_stores = build_outbound_stores(Arc::clone(&stores.filesystem));
     let notification_inbox = build_notification_inbox(Arc::clone(&stores.filesystem));
+    let intake_store =
+        crate::intake_store_assembly::build_intake_store(Arc::clone(&stores.filesystem));
     let outbound_delivery_targets =
         Arc::new(crate::outbound::MutableOutboundDeliveryTargetRegistry::default());
     // arch-exempt: large_file, channel assembly stays co-located pending factory decomposition, plan #7477
@@ -1238,6 +1240,13 @@ pub(super) async fn build_backend_production(
     .map_err(|error| RebornBuildError::InvalidConfig {
         reason: format!("explicit channel delivery handler is invalid: {error}"),
     })?;
+    ironclaw_host_runtime::register_intake_first_party_handlers(
+        &mut first_party_registry,
+        intake_store.clone(),
+    )
+    .map_err(|error| RebornBuildError::InvalidConfig {
+        reason: format!("intake read handlers are invalid: {error}"),
+    })?;
     services = services.with_first_party_capabilities(Arc::new(first_party_registry));
     let admin_configuration_resolver_for_generic = Arc::clone(&admin_configuration_resolver);
     let channel_pairing_registry;
@@ -1432,6 +1441,7 @@ pub(super) async fn build_backend_production(
         skill_auto_activate_learned: Arc::clone(&skill_auto_activate_learned),
         outbound_state: outbound_stores.outbound_state,
         notification_inbox,
+        intake_store,
         reply_attachment_intents: outbound_stores.reply_attachment_intents,
         delivered_gate_routes: outbound_stores.delivered_gate_routes,
         triggered_run_delivery: outbound_stores.triggered_run_delivery,

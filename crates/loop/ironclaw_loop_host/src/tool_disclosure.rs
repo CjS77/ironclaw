@@ -424,6 +424,7 @@ fn builtin_discovery_namespace(local_id: &str) -> DiscoveryNamespace {
         DiscoveryNamespace::Scheduling
     } else if local_id.starts_with("outbound_")
         || local_id.starts_with("notification_")
+        || local_id.starts_with("intake.")
         || local_id == "attach_workspace_file_to_reply"
     {
         DiscoveryNamespace::Messaging
@@ -439,6 +440,10 @@ fn builtin_discovery_namespace(local_id: &str) -> DiscoveryNamespace {
         DiscoveryNamespace::System
     }
 }
+
+#[cfg(test)]
+#[path = "tool_disclosure_namespace_tests.rs"]
+mod builtin_namespace_tests;
 
 fn is_core_tool_definition(definition: &ProviderToolDefinition) -> bool {
     CORE_TOOL_NAMES

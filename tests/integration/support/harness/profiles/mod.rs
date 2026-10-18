@@ -5,6 +5,7 @@ pub(crate) mod device_link;
 pub(crate) mod extension;
 pub(crate) mod file;
 pub(crate) mod github;
+pub(crate) mod intake;
 pub(crate) mod mock_mcp;
 pub(crate) mod outbound;
 pub(crate) mod process;

@@ -19,8 +19,8 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 use ironclaw_extension_contracts::channel_adapter::{
-    ChannelError, ImmediateResponse, InboundBatchFragment, InboundOutcome, ProductTriggerReason,
-    VerifiedInbound,
+    ChannelError, ImmediateResponse, InboundBatchFragment, InboundOutcome, OwnerActivity,
+    ProductTriggerReason, VerifiedInbound,
 };
 use ironclaw_extension_contracts::channel_adapter::{
     ChannelIngress, ChannelSurfaces, NormalizedInboundMessage,
@@ -35,7 +35,8 @@ use ironclaw_extension_host::ingress::{
     ExtensionIngressRouter, ExtensionIngressRouterDeps, InboundAdmission, InboundAdmissionAck,
     InboundSink, InboundSinkError, IngressConfigurationPort, IngressPortError,
     IngressRateLimitConfig, IngressRequest, IngressRouterConfig, IngressSecretsPort,
-    ReplyContextKey, ReplyContextStore, VerificationCandidate, canonical_ingress_path,
+    OwnerActivityAdmission, ReplyContextKey, ReplyContextStore, VerificationCandidate,
+    canonical_ingress_path,
 };
 use ironclaw_extension_host::test_support::resolve_manifest_toml;
 use ironclaw_extension_host::{
@@ -127,6 +128,8 @@ enum AdapterMode {
     Respond,
     OversizedRespond,
     Ignore,
+    /// `{"event":..., "conversation":...}` as the owner acting in a chat.
+    OwnerActivity,
     Panic,
     ParseError,
     ConfigurationError,
@@ -172,6 +175,25 @@ impl ChannelIngress for ScriptedChannelAdapter {
                 retryable: true,
             }),
             AdapterMode::Ignore => Ok(InboundOutcome::Ignore),
+            AdapterMode::OwnerActivity => {
+                let value: serde_json::Value =
+                    serde_json::from_slice(request.body).map_err(|error| ChannelError::Parse {
+                        reason: error.to_string(),
+                    })?;
+                Ok(InboundOutcome::OwnerActivity(OwnerActivity {
+                    conversation: ExternalConversationRef::new(
+                        None,
+                        value["conversation"].as_str().unwrap_or("conv-1"),
+                        None,
+                        None,
+                    )
+                    .expect("conversation"),
+                    occurred_at: value["occurred_at"]
+                        .as_str()
+                        .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
+                        .map_or_else(Utc::now, |at| at.with_timezone(&Utc)),
+                }))
+            }
             AdapterMode::Respond => Ok(InboundOutcome::Respond(ImmediateResponse {
                 status: 200,
                 content_type: Some("text/plain".to_string()),
@@ -302,10 +324,15 @@ enum SinkMode {
     Hang,
 }
 
+/// `(extension, installation, conversation id, occurred_at)` per owner
+/// activity.
+type SeenOwnerActivity = (String, String, String, String);
+
 struct RecordingSink {
     mode: SinkMode,
     admitted: Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
     admitted_messages: Arc<std::sync::Mutex<Vec<NormalizedInboundMessage>>>,
+    owner_activities: Arc<std::sync::Mutex<Vec<SeenOwnerActivity>>>,
 }
 
 #[async_trait]
@@ -341,6 +368,38 @@ impl InboundSink for RecordingSink {
                 } else {
                     InboundAdmissionAck::Accepted
                 })
+            }
+        }
+    }
+
+    async fn owner_activity(
+        &self,
+        admission: OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError> {
+        match self.mode {
+            SinkMode::FailRetryable => Err(InboundSinkError {
+                retryable: true,
+                reason: "scripted retryable failure".to_string(),
+            }),
+            SinkMode::FailPermanent => Err(InboundSinkError {
+                retryable: false,
+                reason: "scripted permanent rejection".to_string(),
+            }),
+            _ => {
+                self.owner_activities
+                    .lock()
+                    .expect("owner activities lock")
+                    .push((
+                        admission.extension_id,
+                        admission.installation_id,
+                        admission
+                            .activity
+                            .conversation
+                            .conversation_id()
+                            .to_string(),
+                        admission.activity.occurred_at.to_rfc3339(),
+                    ));
+                Ok(())
             }
         }
     }
@@ -390,6 +449,7 @@ struct Harness {
     configuration_seen_scopes: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     admitted: Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
     admitted_messages: Arc<std::sync::Mutex<Vec<NormalizedInboundMessage>>>,
+    owner_activities: Arc<std::sync::Mutex<Vec<SeenOwnerActivity>>>,
     reply_context: Arc<TestReplyContextStore>,
 }
 
@@ -499,6 +559,7 @@ async fn harness(options: HarnessOptions) -> Harness {
     let configuration_seen_scopes = Arc::new(std::sync::Mutex::new(Vec::new()));
     let admitted = Arc::new(std::sync::Mutex::new(Vec::new()));
     let admitted_messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let owner_activities = Arc::new(std::sync::Mutex::new(Vec::new()));
     let reply_context = Arc::new(TestReplyContextStore::default());
     let router = ExtensionIngressRouter::new(
         host.snapshot_watch(),
@@ -518,6 +579,7 @@ async fn harness(options: HarnessOptions) -> Harness {
                 mode: options.sink_mode,
                 admitted: Arc::clone(&admitted),
                 admitted_messages: Arc::clone(&admitted_messages),
+                owner_activities: Arc::clone(&owner_activities),
             }),
             reply_context: Arc::clone(&reply_context) as Arc<dyn ReplyContextStore>,
             inbound_batches: options
@@ -537,6 +599,7 @@ async fn harness(options: HarnessOptions) -> Harness {
         configuration_seen_scopes,
         admitted,
         admitted_messages,
+        owner_activities,
         reply_context,
     }
 }
@@ -1475,6 +1538,63 @@ async fn ignore_outcome_acks_without_admission() {
     assert!(harness.admitted.lock().expect("admitted").is_empty());
 }
 
+/// Owner activity is routed to the channel's sink — not admitted as a
+/// message — and acknowledged once the sink settles it.
+#[tokio::test]
+async fn owner_activity_routes_to_the_sink_and_acks() {
+    let harness = harness_with_activation(HarnessOptions {
+        adapter_mode: AdapterMode::OwnerActivity,
+        ..HarnessOptions::default()
+    })
+    .await;
+    let body = br#"{"occurred_at":"2026-10-16T08:00:00Z","conversation":"C-9"}"#;
+    assert_eq!(
+        harness.router.handle(signed_request(body)).await.status,
+        200
+    );
+    assert!(harness.admitted.lock().expect("admitted").is_empty());
+    assert_eq!(
+        *harness.owner_activities.lock().expect("owner activities"),
+        vec![(
+            EXTENSION_ID.to_string(),
+            format!("{EXTENSION_ID}-install"),
+            "C-9".to_string(),
+            "2026-10-16T08:00:00+00:00".to_string(),
+        )]
+    );
+}
+
+/// A sink failure on owner activity follows the admission failure policy:
+/// retryable asks the vendor to redeliver, permanent is acknowledged and
+/// discarded so an ordered vendor queue is not wedged.
+#[tokio::test]
+async fn owner_activity_sink_failures_map_to_retry_or_discard() {
+    let body = br#"{"occurred_at":"2026-10-16T08:00:00Z","conversation":"C-9"}"#;
+    let retryable = harness_with_activation(HarnessOptions {
+        adapter_mode: AdapterMode::OwnerActivity,
+        sink_mode: SinkMode::FailRetryable,
+        ..HarnessOptions::default()
+    })
+    .await;
+    assert_eq!(
+        retryable.router.handle(signed_request(body)).await.status,
+        503
+    );
+
+    let permanent = harness_with_activation(HarnessOptions {
+        adapter_mode: AdapterMode::OwnerActivity,
+        sink_mode: SinkMode::FailPermanent,
+        ..HarnessOptions::default()
+    })
+    .await;
+    let response = permanent.router.handle(signed_request(body)).await;
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.body,
+        br#"{"status":"acknowledged_discarded"}"#.to_vec()
+    );
+}
+
 /// ING-11 (storage leg): `reply_context` is stored host-side keyed to the
 /// conversation source binding before the admission commit.
 #[tokio::test]
@@ -1633,6 +1753,13 @@ struct CompleteAttachmentAdmissionSink {
 
 #[async_trait]
 impl InboundSink for CompleteAttachmentAdmissionSink {
+    async fn owner_activity(
+        &self,
+        _admission: OwnerActivityAdmission,
+    ) -> Result<(), InboundSinkError> {
+        Ok(())
+    }
+
     async fn admit(
         &self,
         admission: InboundAdmission,
