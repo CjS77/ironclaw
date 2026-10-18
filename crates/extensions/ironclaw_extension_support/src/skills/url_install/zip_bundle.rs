@@ -23,6 +23,17 @@ pub(super) async fn extract_skill_bundle_blocking(
         })?
 }
 
+/// The entry's decoded name. An archive with an undecodable name is refused
+/// whole, the same as one with an unreadable entry.
+fn entry_name<'a, R: Read + ?Sized>(
+    file: &'a zip::read::ZipFile<'_, R>,
+) -> Result<std::borrow::Cow<'a, str>, SkillManagementCapabilityError> {
+    file.name().map_err(|error| {
+        tracing::debug!(%error, "skill URL ZIP entry name is not decodable");
+        SkillManagementCapabilityError::new(RuntimeDispatchErrorKind::OperationFailed)
+    })
+}
+
 pub(super) fn extract_skill_bundle(
     data: &[u8],
     requested_subdir: Option<&str>,
@@ -48,7 +59,7 @@ pub(super) fn extract_skill_bundle(
                     RuntimeDispatchErrorKind::OutputTooLarge,
                 ));
             }
-            raw_paths.push(normalize_archive_path(Path::new(file.name()))?);
+            raw_paths.push(normalize_archive_path(Path::new(&*entry_name(&file)?))?);
         }
     }
     let strip_root = strip_common_archive_root(&raw_paths);
@@ -69,8 +80,7 @@ pub(super) fn extract_skill_bundle(
                 RuntimeDispatchErrorKind::OutputTooLarge,
             ));
         }
-        let entry_name = file.name().to_string();
-        let mut path = normalize_archive_path(Path::new(&entry_name))?;
+        let mut path = normalize_archive_path(Path::new(&*entry_name(&file)?))?;
         if let Some(root) = &strip_root
             && let Ok(stripped) = path.strip_prefix(root)
         {

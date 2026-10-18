@@ -15,7 +15,7 @@ pub(crate) fn package(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
     {
         let mut zip = zip::ZipWriter::new(&mut cursor);
         let epoch = zip::DateTime::from_date_and_time(1980, 1, 1, 0, 0, 0).unwrap(); // safety: `mod test_fixtures` is `#[cfg(test)]`-only and the literal date is valid by construction.
-        let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+        let options: zip::write::SimpleFileOptions = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .last_modified_time(epoch);
         for (name, bytes) in entries {

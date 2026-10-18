@@ -14,6 +14,17 @@ ignore = [
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0104",
+    # rustls 0.22.4 advisories — the same libsql 0.9.30 pin (hyper-rustls 0.25);
+    # libsql 0.10.0 keeps it, so there is no upgrade yet. Our own TLS is on
+    # rustls 0.23.46, which has both fixes.
+    # RUSTSEC-2026-0346: `Debug` on stored client session values prints the
+    # session secret. Only a custom `ClientSessionStore` that logs those values
+    # leaks it; nothing in the tree implements one.
+    # RUSTSEC-2026-0349: a forged ServerHello can make later connections skip
+    # the post-quantum hybrid key exchange. rustls 0.22 never offers a
+    # post-quantum group, so there is nothing to downgrade.
+    "RUSTSEC-2026-0346",
+    "RUSTSEC-2026-0349",
     # h2 unbounded empty DATA frames — h2 0.4 is patched in Cargo.lock, but
     # libsql 0.9.30 still pins tonic/hyper to h2 0.3.27. The advisory provides
     # no patched 0.3.x release, so keep the legacy line ignored until libsql's
